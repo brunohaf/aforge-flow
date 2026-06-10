@@ -1,0 +1,36 @@
+name: asset-optimizer
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - ffmpeg
+  - pillow
+  - opencv
+  - click
+  - pydantic
+  - ipython
+  - scipy
+  - pip
+
+  - pip:
+      - rembg[gpu]==2.0.76
+      - pymatting
+      - python-dotenv
+      - transformers==4.46.3
+      - accelerate
+      - tqdm
+      - structlog
+      - rich
+      - av
+      - pytest
+      - pytest-cov
+      - black
+      - ruff
