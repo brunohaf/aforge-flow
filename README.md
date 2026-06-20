@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <b>vtt-asset-forge</b>
+  <b>aforge-flow</b>
   <br>
 </h1>
 
@@ -18,6 +18,7 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
   <a href="#key-features">Key Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#hardware-aware-tuning">Auto-Tuning</a> •
   <a href="#creature-classification">Creature Classification</a> •
   <a href="#asset-categories">Asset Categories</a> •
   <a href="#background-removal-models">Models</a> •
@@ -25,7 +26,7 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
   <a href="#development">Development</a>
 </p>
 
-> Forge, transform, and optimize digital assets for virtual tabletops, web publishing, content libraries, and creative workflows.
+> AForge, transform, and optimize digital assets for virtual tabletops, web publishing, content libraries, and creative workflows.
 
 ---
 
@@ -60,7 +61,7 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
 - Large-scale asset library processing
 - Progress tracking and reporting
 - Structured logging
-- Automatic GPU / CPU execution
+- Hardware-aware tuning: `aforge recommend` inspects the machine + workload, and `--auto-tune` applies safe `--workers`/`--gpu` settings automatically
 - Resumable processing
 
 ---
@@ -71,8 +72,9 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
 
 - Python 3.10+
 - FFmpeg
-- NVIDIA GPU recommended
-- CUDA-compatible drivers (optional)
+- NVIDIA GPU + CUDA drivers (optional — enables GPU acceleration; CPU works too)
+
+Run `aforge recommend` after install to see what your machine supports and the suggested settings.
 
 ### Conda Installation (Recommended)
 
@@ -96,10 +98,10 @@ Create environment:
 
 ```bash
 git clone <repository-url>
-cd vtt-asset-forge
+cd aforge-flow
 
 conda env create -f environment.yml
-conda activate vtt-asset-forge
+conda activate aforge-flow
 
 pip install -e .
 ```
@@ -108,7 +110,7 @@ To enable **creature classification** (CLIP-family + optional VLM fallback),
 install the extra into the **conda env** (not your global Python):
 
 ```bash
-conda activate vtt-asset-forge
+conda activate aforge-flow
 pip install -e ".[classify]"
 ```
 
@@ -120,7 +122,7 @@ weights (~1.5 GB) download to `.cache/` on first run.
 
 ```bash
 git clone <repository-url>
-cd vtt-asset-forge
+cd aforge-flow
 
 python -m venv .venv
 source .venv/bin/activate
@@ -154,6 +156,31 @@ aforge optimize-media \
   --image-format webp \
   --video-format webm \
   --compression balanced
+```
+
+WebM video is encoded with GPU AV1 (NVENC) when a capable GPU is available, and
+falls back to CPU VP9 otherwise. Audio in WebM is encoded as Opus.
+
+### Hardware-Aware Tuning
+
+Let `aforge` pick safe, performant settings instead of guessing at `--workers`
+and `--gpu/--cpu`. The `recommend` command inspects your CPU, RAM, GPU/VRAM, and
+NVENC support, scans the input directory (image vs video mix and sizes), and
+prints a suggested command — without risking out-of-memory or encoder-session
+exhaustion:
+
+```bash
+aforge recommend --input assets --video-format webm
+# add --full-pipeline to tune for `process` (background removal + classification)
+# add --json for machine-readable output
+```
+
+To apply the same logic automatically at run time, pass `--auto-tune` to
+`optimize-media` or `process`. It overrides `--workers` and `--gpu/--cpu` with
+the recommended values and logs what it chose:
+
+```bash
+aforge optimize-media --input assets --output output --video-format webm --auto-tune
 ```
 
 ### Creature Classification
@@ -223,7 +250,7 @@ metadata are treated as unreliable and never consulted). Two levels per asset:
 
 Each image is embedded once by a CLIP-family encoder and matched against
 prompt-engineered text prototypes (rich descriptions, not bare labels — see
-`src/vtt_asset_forge/taxonomy.py`). Results are returned in the
+`src/aforge_flow/taxonomy.py`). Results are returned in the
 `ProcessorResult` metadata and written as a `<image>.classification.json`
 sidecar:
 
@@ -235,10 +262,10 @@ sidecar:
 
 | Model | VRAM | Notes |
 |-------|------|-------|
-| `siglip2` | ~1.5 GB | **Default.** Best zero-shot accuracy for fantasy art; fits a 4070 |
+| `siglip2` | ~1.5 GB | **Default.** Best zero-shot accuracy for fantasy art |
 | `siglip`  | ~1.3 GB | Strong; use if SigLIP 2 weights are unavailable |
 | `clip`    | ~1.2 GB | OpenAI CLIP ViT-L/14 baseline |
-| `metaclip2` | 2–4 GB | Accuracy headroom on 12 GB GPUs |
+| `metaclip2` | 2–4 GB | Accuracy headroom when more VRAM is available |
 
 ### Confidence workflow
 
@@ -305,7 +332,7 @@ MODEL_BY_CATEGORY = {
 ## Project Structure
 
 ```text
-vtt-asset-forge/
+aforge-flow/
 ├── assets
 │
 ├── output/
@@ -313,7 +340,7 @@ vtt-asset-forge/
 ├── scripts/
 │
 ├── src/
-│   └── vtt_asset_forge/
+│   └── aforge_flow/
 │       ├── processors/
 │       ├── utils/
 │       ├── cli.py
@@ -331,13 +358,24 @@ vtt-asset-forge/
 
 ## Performance Notes
 
-### GPU
+### Auto-tuning
 
-Recommended:
+Rather than hand-tuning `--workers` and `--gpu/--cpu`, let the tool size them for
+your hardware and workload:
 
-- RTX 3060+
-- RTX 4070 ideal
-- CUDA-enabled ONNX Runtime
+```bash
+aforge recommend --input assets --video-format webm   # inspect + suggest
+aforge optimize-media --input assets --output output --auto-tune   # apply automatically
+```
+
+The recommender accounts for the key constraints:
+
+- **GPU video encoding** uses a single shared NVENC block, so throughput does not
+  scale with more workers — it keeps the worker count low to avoid contention.
+- **CPU video encoding** (VP9/libx264) is already multithreaded, so it favors
+  fewer workers with more threads each over many contending workers.
+- **Memory** — worker counts are capped against available system RAM (and VRAM for
+  the full pipeline) to avoid out-of-memory failures.
 
 ### Background Removal
 
@@ -345,21 +383,8 @@ BiRefNet models offer the highest extraction quality but require significantly m
 
 For large images:
 
-- Limit worker count
 - Resize extremely large images before processing
-- Monitor VRAM using:
-
-```bash
-nvidia-smi
-```
-
-### Recommended Worker Counts
-
-| GPU | Workers |
-|------|---------|
-| RTX 3060 | 1 |
-| RTX 4070 | 1-2 |
-| CPU Only | 1 |
+- Use `--auto-tune` (or `aforge recommend`) to size workers to available memory
 
 ---
 

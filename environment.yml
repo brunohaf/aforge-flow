@@ -1,4 +1,4 @@
-name: asset-forge
+name: aforge-flow
 
 channels:
   - conda-forge
@@ -17,7 +17,7 @@ dependencies:
   - pip:
       # PyTorch CUDA 12.1 wheels (conda pytorch channel is deprecated)
       - --extra-index-url https://download.pytorch.org/whl/cu121
-      - -e .
+      - -e . # installs aforge cli
       - torch
       - torchvision
       - torchaudio
@@ -35,5 +35,3 @@ dependencies:
       - pytest-cov
       - black
       - ruff
-
-# conda run -n asset-forge python -c "import torch; print(torch.__version__, torch.cuda.is_available());import onnxruntime;print(onnxruntime.get_available_providers());"

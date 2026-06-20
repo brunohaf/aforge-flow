@@ -29,15 +29,15 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vtt_asset_forge.config import ClipModelChoice, Config
-from vtt_asset_forge.taxonomy import (
+from aforge_flow.config import ClipModelChoice, Config
+from aforge_flow.taxonomy import (
     ASSET_TYPE_NORMALIZATION,
     CREATURE_CATEGORY_PROMPTS,
     asset_type_labels,
     creature_category_labels,
 )
-from vtt_asset_forge.utils.embedding_cache import EmbeddingCache
-from vtt_asset_forge.processors import creature_classification as cc
+from aforge_flow.utils.embedding_cache import EmbeddingCache
+from aforge_flow.processors import creature_classification as cc
 
 
 # --------------------------------------------------------------------------- #

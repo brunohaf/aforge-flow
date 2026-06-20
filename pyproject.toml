@@ -3,14 +3,14 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vtt_asset_forge"
+name = "aforge_flow"
 version = "0.1.0"
 description = "GPU-accelerated tabletop/VTT asset pipeline for batch background removal, image cleaning, media transcoding, and creature classification"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "VTT Asset Forge Contributors"}
+    {name = "AForge Flow Contributors"}
 ]
 keywords = ["background-removal", "rembg", "video-optimization", "image-processing", "gpu", "cuda"]
 classifiers = [
@@ -38,6 +38,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tqdm>=4.65.0",
     "structlog>=23.1.0",
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
@@ -62,10 +63,10 @@ classify = [
 ]
 
 [project.scripts]
-aforge = "vtt_asset_forge.cli:main"
+aforge = "aforge_flow.cli:main"
 
 [tool.setuptools]
-packages = ["vtt_asset_forge", "vtt_asset_forge.processors", "vtt_asset_forge.utils"]
+packages = ["aforge_flow", "aforge_flow.processors", "aforge_flow.utils"]
 package-dir = {"" = "src"}
 
 [tool.black]
