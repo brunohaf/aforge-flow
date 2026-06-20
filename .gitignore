@@ -98,8 +98,12 @@ dmypy.json
 *~
 .DS_Store
 
-# Asset Optimizer specific
+# Cache
 .cache/
+.pytest_cache/
+.ruff_cache/
+
+# Project
 output/
 assets/
 *.nobg.*

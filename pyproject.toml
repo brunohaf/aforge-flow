@@ -3,14 +3,14 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "asset-optimizer"
+name = "vtt_asset_forge"
 version = "0.1.0"
-description = "Professional GPU-accelerated asset optimization tool for batch background removal, image cleaning, and media transcoding"
+description = "GPU-accelerated tabletop/VTT asset pipeline for batch background removal, image cleaning, media transcoding, and creature classification"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Asset Optimizer Contributors"}
+    {name = "VTT Asset Forge Contributors"}
 ]
 keywords = ["background-removal", "rembg", "video-optimization", "image-processing", "gpu", "cuda"]
 classifiers = [
@@ -53,12 +53,19 @@ video = [
     "ffmpeg-python>=0.2.1",
     "av>=10.0.0",
 ]
+classify = [
+    # Zero-shot CLIP-family classification + optional VLM fallback.
+    "transformers>=4.49.0",
+    "accelerate>=0.30.0",
+    # Optional: 4-bit VLM fallback on CUDA. Safe to omit (falls back to fp16).
+    "bitsandbytes>=0.43.0; platform_system == 'Linux'",
+]
 
 [project.scripts]
-asset-optimizer = "assetfoundry.cli:main"
+aforge = "vtt_asset_forge.cli:main"
 
 [tool.setuptools]
-packages = ["assetfoundry", "assetfoundry.processors", "assetfoundry.utils"]
+packages = ["vtt_asset_forge", "vtt_asset_forge.processors", "vtt_asset_forge.utils"]
 package-dir = {"" = "src"}
 
 [tool.black]
@@ -95,3 +102,6 @@ ignore_missing_imports = true
 minversion = "7.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
+markers = [
+    "gpu: integration tests that require a CUDA device and downloaded model weights",
+]

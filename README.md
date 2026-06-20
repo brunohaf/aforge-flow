@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <b>AssetFoundry</b>
+  <b>vtt-asset-forge</b>
   <br>
 </h1>
 
@@ -18,6 +18,7 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
   <a href="#key-features">Key Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#creature-classification">Creature Classification</a> •
   <a href="#asset-categories">Asset Categories</a> •
   <a href="#background-removal-models">Models</a> •
   <a href="#project-structure">Project Structure</a> •
@@ -37,6 +38,14 @@ GPU-accelerated toolkit for asset segmentation, optimization, conversion, and pr
 - Automatic model selection based on asset category
 - High-quality alpha extraction for transparent PNG generation
 - Optimized for fantasy artwork, portraits, creatures, and RPG assets
+
+### Zero-Shot Creature Classification
+
+- Classifies fantasy artwork into the 14 D&D creature types **from image content alone** — file names, folders, and metadata are ignored
+- Detects asset type (`Portrait` / `Token`) in the same pass
+- Built on a CLIP-family vision encoder (SigLIP 2 by default) with prompt-engineered text prototypes — no expensive VLM inference on the common case
+- Persistent embedding cache: every picture is embedded once, ever; re-runs do zero GPU work
+- Optional VLM fallback (Qwen2.5-VL) for the low-confidence tail only
 
 ### Asset Optimization
 
@@ -87,19 +96,31 @@ Create environment:
 
 ```bash
 git clone <repository-url>
-cd assetfoundry
+cd vtt-asset-forge
 
 conda env create -f environment.yml
-conda activate assetfoundry
+conda activate vtt-asset-forge
 
 pip install -e .
 ```
+
+To enable **creature classification** (CLIP-family + optional VLM fallback),
+install the extra into the **conda env** (not your global Python):
+
+```bash
+conda activate vtt-asset-forge
+pip install -e ".[classify]"
+```
+
+This pulls `transformers>=4.49` (required for SigLIP 2), `accelerate`, and
+`bitsandbytes` (Linux, for the optional 4-bit VLM fallback). The SigLIP 2
+weights (~1.5 GB) download to `.cache/` on first run.
 
 ### Manual Installation
 
 ```bash
 git clone <repository-url>
-cd assetfoundry
+cd vtt-asset-forge
 
 python -m venv .venv
 source .venv/bin/activate
@@ -115,7 +136,7 @@ pip install "rembg[gpu]"
 ### Background Removal
 
 ```bash
-assetfoundry process \
+aforge process \
   --input assets/rembg/portraits \
   --output output/portraits \
   --background-removal \
@@ -127,30 +148,56 @@ assetfoundry process \
 ### Media Optimization
 
 ```bash
-assetfoundry optimize-media \
+aforge optimize-media \
   --input assets/webmp \
   --output output/webmp \
-  --output-format webp \
+  --image-format webp \
+  --video-format webm \
   --compression balanced
+```
+
+### Creature Classification
+
+Classify a directory of images into the D&D creature taxonomy from image
+content alone (requires the `[classify]` extra):
+
+```bash
+aforge classify \
+  --input assets \
+  --output output \
+  --clip-model siglip2 \
+  --confidence-threshold 0.85 \
+  --gpu
+```
+
+Add `--vlm-fallback` to resolve low-confidence cases with Qwen2.5-VL. Or run
+it as a stage of the full pipeline with `--classification`:
+
+```bash
+aforge process \
+  --input assets --output output \
+  --classification --clip-model siglip2 \
+  --background-removal --media-optimization --gpu
 ```
 
 ### Full Processing Pipeline
 
 ```bash
-assetfoundry process \
+aforge process \
   --input assets \
   --output output \
   --background-removal \
   --media-optimization \
   --category general \
-  --output-format webp \
+  --image-format webp \
+  --video-format webm \
   --compression balanced \
   --gpu
 ```
 
 ### System Information
 
-AssetFoundry can automatically select processing strategies based on asset type.
+aforge can automatically select processing strategies based on asset type.
 
 | Category | Description |
 |-----------|-------------|
@@ -161,6 +208,57 @@ AssetFoundry can automatically select processing strategies based on asset type.
 | `portrait` | Character portraits, NPC artwork, and journal illustrations |
 | `token` | Virtual tabletop tokens and token-ready artwork |
 | `general` | Mixed or unknown content |
+
+---
+
+## Creature Classification
+
+Zero-shot classification from **image content only** (file names, folders, and
+metadata are treated as unreliable and never consulted). Two levels per asset:
+
+- **Asset type** — normalized to `Portrait` or `Token`
+- **Creature category** — one of the 14 official D&D types: Aberration, Beast,
+  Celestial, Construct, Dragon, Elemental, Fey, Fiend, Giant, Humanoid,
+  Monstrosity, Ooze, Plant, Undead
+
+Each image is embedded once by a CLIP-family encoder and matched against
+prompt-engineered text prototypes (rich descriptions, not bare labels — see
+`src/vtt_asset_forge/taxonomy.py`). Results are returned in the
+`ProcessorResult` metadata and written as a `<image>.classification.json`
+sidecar:
+
+```json
+{ "asset_type": "Undead", "category": "Undead", "confidence": 0.93, "model": "siglip2", "source": "clip" }
+```
+
+### Encoders (`--clip-model`)
+
+| Model | VRAM | Notes |
+|-------|------|-------|
+| `siglip2` | ~1.5 GB | **Default.** Best zero-shot accuracy for fantasy art; fits a 4070 |
+| `siglip`  | ~1.3 GB | Strong; use if SigLIP 2 weights are unavailable |
+| `clip`    | ~1.2 GB | OpenAI CLIP ViT-L/14 baseline |
+| `metaclip2` | 2–4 GB | Accuracy headroom on 12 GB GPUs |
+
+### Confidence workflow
+
+`confidence ≥ threshold` (default `0.85`) and a sufficient top1−top2 margin →
+the CLIP result is auto-accepted (`source: "clip"`). Otherwise, if
+`--vlm-fallback` is set, Qwen2.5-VL classifies that single image
+(`source: "vlm"`). The VLM only ever runs on the uncertain tail, so its cost
+is amortized away.
+
+### Throughput
+
+A one-time batched embedding pre-pass runs before the per-file stage, then all
+embeddings are cached in `.cache/clip_embeddings.sqlite` (float16, ~13 MB for
+6,000 assets). Re-runs — including after tweaking thresholds or prompts — do
+**zero** GPU work. Benchmark with:
+
+```bash
+python scripts/benchmark_classifier.py throughput -i assets --batch-size 64
+python scripts/benchmark_classifier.py eval --labels val.csv --threshold 0.85
+```
 
 ---
 
@@ -207,7 +305,7 @@ MODEL_BY_CATEGORY = {
 ## Project Structure
 
 ```text
-assetfoundry/
+vtt-asset-forge/
 ├── assets
 │
 ├── output/
@@ -215,7 +313,7 @@ assetfoundry/
 ├── scripts/
 │
 ├── src/
-│   └── assetfoundry/
+│   └── vtt_asset_forge/
 │       ├── processors/
 │       ├── utils/
 │       ├── cli.py

@@ -1,19 +1,13 @@
-name: asset-optimizer
+name: asset-forge
 
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
+  - nodefaults
 
 dependencies:
   - python=3.11
-  - pytorch
-  - torchvision
-  - torchaudio
-  - pytorch-cuda=12.1
   - ffmpeg
   - pillow
-  - opencv
   - click
   - pydantic
   - ipython
@@ -21,6 +15,13 @@ dependencies:
   - pip
 
   - pip:
+      # PyTorch CUDA 12.1 wheels (conda pytorch channel is deprecated)
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - -e .
+      - torch
+      - torchvision
+      - torchaudio
+      - opencv-python-headless
       - rembg[gpu]==2.0.76
       - pymatting
       - python-dotenv
@@ -34,3 +35,5 @@ dependencies:
       - pytest-cov
       - black
       - ruff
+
+# conda run -n asset-forge python -c "import torch; print(torch.__version__, torch.cuda.is_available());import onnxruntime;print(onnxruntime.get_available_providers());"
