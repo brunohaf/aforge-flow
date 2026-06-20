@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <b>vtt-asset-forge</b>
+  <b>aforge-foundry</b>
   <br>
 </h1>
 
