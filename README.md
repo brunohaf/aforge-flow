@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <b>aforge-flow</b>
+  <b>AForge-Flow</b>
   <br>
 </h1>
 
