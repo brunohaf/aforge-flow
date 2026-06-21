@@ -1,0 +1,60 @@
+{
+  "_comment": "Reference vocabulary of canonical D&D-style creature names, grouped by the 14 official creature types (see taxonomy.CREATURE_CATEGORY_PROMPTS). Used as a soft hint for the Qwen caption backend so generated filenames prefer real monster-manual names over invented ones. Names are already slug-formatted (lowercase, hyphenated); edit freely to taste. Keys MUST match the canonical creature-category labels.",
+  "Aberration": [
+    "mind-flayer", "beholder", "gibbering-mouther", "aboleth", "chuul",
+    "otyugh", "grell", "cloaker", "nothic", "flumph", "intellect-devourer"
+  ],
+  "Beast": [
+    "dire-wolf", "giant-spider", "brown-bear", "giant-eagle", "saber-tooth-tiger",
+    "giant-boar", "panther", "constrictor-snake", "giant-rat", "axe-beak", "giant-scorpion"
+  ],
+  "Celestial": [
+    "angel", "deva", "planetar", "solar", "couatl", "pegasus", "unicorn",
+    "ki-rin", "hollyphant", "empyrean"
+  ],
+  "Construct": [
+    "iron-golem", "stone-golem", "clay-golem", "animated-armor", "flesh-golem",
+    "shield-guardian", "helmed-horror", "clockwork-automaton", "homunculus", "scarecrow"
+  ],
+  "Dragon": [
+    "red-dragon", "blue-dragon", "green-dragon", "black-dragon", "white-dragon",
+    "gold-dragon", "silver-dragon", "wyvern", "dragon-wyrmling", "pseudodragon",
+    "dragon-turtle", "faerie-dragon"
+  ],
+  "Elemental": [
+    "fire-elemental", "water-elemental", "earth-elemental", "air-elemental",
+    "magma-mephit", "dust-devil", "water-weird", "salamander", "azer", "invisible-stalker"
+  ],
+  "Fey": [
+    "pixie", "sprite", "dryad", "satyr", "blink-dog", "sea-hag", "green-hag",
+    "night-hag", "redcap", "korred", "quickling"
+  ],
+  "Fiend": [
+    "balor", "pit-fiend", "succubus", "imp", "quasit", "hezrou", "vrock",
+    "glabrezu", "marilith", "barbed-devil", "bearded-devil", "horned-devil"
+  ],
+  "Giant": [
+    "hill-giant", "frost-giant", "fire-giant", "stone-giant", "cloud-giant",
+    "storm-giant", "ogre", "troll", "ettin", "cyclops", "fomorian"
+  ],
+  "Humanoid": [
+    "human-knight", "elf-mage", "dwarf-warrior", "orc-brute", "goblin",
+    "hobgoblin", "bugbear", "kobold", "gnoll", "lizardfolk", "bandit", "cultist"
+  ],
+  "Monstrosity": [
+    "owlbear", "manticore", "griffon", "chimera", "hydra", "basilisk",
+    "cockatrice", "displacer-beast", "bulette", "gorgon", "minotaur", "roper"
+  ],
+  "Ooze": [
+    "gelatinous-cube", "black-pudding", "ochre-jelly", "gray-ooze",
+    "slithering-tracker", "gibbering-ooze"
+  ],
+  "Plant": [
+    "treant", "shambling-mound", "awakened-tree", "myconid", "twig-blight",
+    "vine-blight", "needle-blight", "assassin-vine", "shrieker", "gas-spore"
+  ],
+  "Undead": [
+    "skeleton", "zombie", "lich", "vampire", "ghost", "wraith", "ghoul",
+    "ghast", "wight", "mummy", "specter", "banshee", "death-knight", "revenant"
+  ]
+}

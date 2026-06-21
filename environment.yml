@@ -25,7 +25,8 @@ dependencies:
       - rembg[gpu]==2.0.76
       - pymatting
       - python-dotenv
-      - transformers==4.46.3
+      - transformers>=4.49  # qwen2_5_vl architecture support (added in 4.49.0)
+      - bitsandbytes==0.49.2
       - accelerate
       - tqdm
       - structlog

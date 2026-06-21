@@ -54,9 +54,18 @@ video = [
     "ffmpeg-python>=0.2.1",
     "av>=10.0.0",
 ]
+web = [
+    # Local browser UI for the pipeline (``aforge web``).
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",  # required for file uploads
+]
 classify = [
     # Zero-shot CLIP-family classification + optional VLM fallback.
-    "transformers>=4.49.0",
+    # Lower bound: 4.49 first ships the Qwen2.5-VL (`qwen2_5_vl`) architecture.
+    # Upper bound: 5.x is a major rewrite (e.g. `torch_dtype`->`dtype`) not yet
+    # validated against the BLIP/SigLIP/CLIP paths here.
+    "transformers>=4.49.0,<5",
     "accelerate>=0.30.0",
     # Optional: 4-bit VLM fallback on CUDA. Safe to omit (falls back to fp16).
     "bitsandbytes>=0.43.0; platform_system == 'Linux'",
@@ -66,8 +75,11 @@ classify = [
 aforge = "aforge_flow.cli:main"
 
 [tool.setuptools]
-packages = ["aforge_flow", "aforge_flow.processors", "aforge_flow.utils"]
+packages = ["aforge_flow", "aforge_flow.processors", "aforge_flow.utils", "aforge_flow.web", "aforge_flow.web.routes"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+aforge_flow = ["creature_names.json"]
 
 [tool.black]
 line-length = 100

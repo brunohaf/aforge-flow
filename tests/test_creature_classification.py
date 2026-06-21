@@ -27,9 +27,8 @@ import os
 
 import numpy as np
 import pytest
-from PIL import Image
-
 from aforge_flow.config import ClipModelChoice, Config
+from aforge_flow.processors import creature_classification as cc
 from aforge_flow.taxonomy import (
     ASSET_TYPE_NORMALIZATION,
     CREATURE_CATEGORY_PROMPTS,
@@ -37,8 +36,7 @@ from aforge_flow.taxonomy import (
     creature_category_labels,
 )
 from aforge_flow.utils.embedding_cache import EmbeddingCache
-from aforge_flow.processors import creature_classification as cc
-
+from PIL import Image
 
 # --------------------------------------------------------------------------- #
 # Fakes / fixtures
