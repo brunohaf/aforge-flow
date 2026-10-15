@@ -70,7 +70,7 @@ def cmd_rm(*patterns: str) -> int:
 def _torch_status(venv_python: Path) -> tuple[bool, str]:
     probe = "import torch; print(torch.__version__, 'cuda', torch.cuda.is_available())"
     try:
-        out = subprocess.run(
+        out = subprocess.run(  # nosec B603: fixed probe against the local venv interpreter
             [str(venv_python.resolve()), "-c", probe], check=False, capture_output=True, text=True
         )
     except OSError as exc:
@@ -115,7 +115,7 @@ def cmd_ruleset(path: str = ".github/rulesets/main.json") -> int:
     if not gh:
         print("gh CLI not found: https://cli.github.com", file=sys.stderr)
         return 1
-    listing = subprocess.run(
+    listing = subprocess.run(  # nosec B603: gh resolved via shutil.which, fixed arguments
         [gh, "api", "repos/{owner}/{repo}/rulesets"], check=False, capture_output=True, text=True
     )
     if listing.returncode != 0:
@@ -129,7 +129,9 @@ def cmd_ruleset(path: str = ".github/rulesets/main.json") -> int:
         if existing
         else ("POST", "repos/{owner}/{repo}/rulesets")
     )
-    applied = subprocess.run([gh, "api", "-X", method, endpoint, "--input", path], check=False)
+    applied = subprocess.run(  # nosec B603: gh resolved via shutil.which, repo-controlled path
+        [gh, "api", "-X", method, endpoint, "--input", path], check=False
+    )
     if applied.returncode == 0:
         print(f"ruleset '{spec['name']}' {'updated' if existing else 'created'}")
     return applied.returncode
