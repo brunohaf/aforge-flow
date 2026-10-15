@@ -27,6 +27,9 @@ import os
 
 import numpy as np
 import pytest
+from conftest import DIM, FakeEncoder
+from PIL import Image
+
 from aforge_flow.config import ClipModelChoice, Config
 from aforge_flow.processors import creature_classification as cc
 from aforge_flow.taxonomy import (
@@ -36,58 +39,6 @@ from aforge_flow.taxonomy import (
     creature_category_labels,
 )
 from aforge_flow.utils.embedding_cache import EmbeddingCache
-from PIL import Image
-
-# --------------------------------------------------------------------------- #
-# Fakes / fixtures
-# --------------------------------------------------------------------------- #
-
-DIM = 16
-
-
-class FakeEncoder:
-    """Deterministic stand-in for :class:`ClipEncoder` (no model, no GPU).
-
-    Text/image embeddings are derived from a stable hash of their content, so
-    classification is reproducible. ``image_calls`` records how many images
-    were actually embedded, letting tests assert the cache fast path.
-    """
-
-    def __init__(self, *_args, **_kwargs) -> None:
-        self.hf_id = "fake/encoder"
-        self.dim = DIM
-        self.image_calls = 0
-
-    @property
-    def model_key(self) -> str:
-        return f"{self.hf_id}|d{self.dim}"
-
-    @staticmethod
-    def _vec(seed_text: str) -> np.ndarray:
-        rng = np.random.default_rng(abs(hash(seed_text)) % (2**32))
-        return cc.l2_normalize(rng.standard_normal(DIM).astype(np.float32))
-
-    def encode_texts(self, texts):
-        return np.vstack([self._vec("t:" + t) for t in texts])
-
-    def encode_images(self, images):
-        self.image_calls += len(images)
-        # Seed by pixel bytes so identical pictures get identical vectors.
-        return np.vstack([self._vec("i:" + im.tobytes().hex()[:32]) for im in images])
-
-
-@pytest.fixture
-def patched_encoder(monkeypatch):
-    """Replace ClipEncoder with FakeEncoder and hand back the instance."""
-    holder = {}
-
-    def factory(*args, **kwargs):
-        enc = FakeEncoder(*args, **kwargs)
-        holder["enc"] = enc
-        return enc
-
-    monkeypatch.setattr(cc, "ClipEncoder", factory)
-    return holder
 
 
 @pytest.fixture
@@ -120,10 +71,6 @@ def _make_distinct_image(path, seed, size=(64, 64)):
     return path
 
 
-# --------------------------------------------------------------------------- #
-# Taxonomy
-# --------------------------------------------------------------------------- #
-
 def test_taxonomy_has_14_creature_types():
     assert len(creature_category_labels()) == 14
     assert "Undead" in creature_category_labels()
@@ -142,10 +89,6 @@ def test_asset_type_normalization_targets_two_buckets():
     for label in asset_type_labels():
         assert label in ASSET_TYPE_NORMALIZATION
 
-
-# --------------------------------------------------------------------------- #
-# Math
-# --------------------------------------------------------------------------- #
 
 def test_l2_normalize_unit_length():
     x = np.array([[3.0, 4.0]])
@@ -230,10 +173,6 @@ def test_siglip_text_encoding_uses_dynamic_padding():
     assert enc.processor.kwargs["truncation"] is True
 
 
-# --------------------------------------------------------------------------- #
-# Embedding cache
-# --------------------------------------------------------------------------- #
-
 def test_embedding_cache_roundtrip(tmp_path):
     cache = EmbeddingCache(tmp_path / "emb.sqlite", model_key="m1", dim=DIM)
     vec = np.arange(DIM, dtype=np.float32)
@@ -265,10 +204,6 @@ def test_embedding_cache_persists_across_instances(tmp_path):
     c2.close()
 
 
-# --------------------------------------------------------------------------- #
-# Processor
-# --------------------------------------------------------------------------- #
-
 def test_process_returns_valid_classification(patched_encoder, config):
     img = _make_image(config.input_dir / "mystery.png")
     proc = cc.CreatureClassificationProcessor(config)
@@ -276,7 +211,7 @@ def test_process_returns_valid_classification(patched_encoder, config):
     result = proc.process(img)
 
     assert result.success
-    assert result.output_path == img  # pass-through, pixels untouched
+    assert result.output_path == img
     meta = result.metadata
     assert meta["asset_type"] in {"Portrait", "Token"}
     assert meta["category"] in creature_category_labels()
