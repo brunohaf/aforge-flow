@@ -24,8 +24,7 @@ The cache key is ``(model_key, content_key)`` where:
   already produced by the caption processor, so that re-encoded /
   re-resolution replicas of the same artwork share one embedding.
 
-For 6,000 assets at 1152-d float16 the store is roughly
-``6000 * 1152 * 2 bytes ≈ 13 MB`` — trivially small.
+At 1152-d float16 each asset costs ~2.3 KB (10,000 assets ≈ 23 MB).
 """
 
 from __future__ import annotations
@@ -33,7 +32,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import structlog
@@ -67,19 +65,17 @@ class EmbeddingCache:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS embeddings (
                 model_key   TEXT NOT NULL,
                 content_key TEXT NOT NULL,
                 vector      BLOB NOT NULL,
                 PRIMARY KEY (model_key, content_key)
             )
-            """
-        )
+            """)
         self._conn.commit()
 
-    def get(self, content_key: str) -> Optional[np.ndarray]:
+    def get(self, content_key: str) -> np.ndarray | None:
         """Return the cached vector for *content_key*, or ``None`` if absent.
 
         Args:
@@ -107,7 +103,7 @@ class EmbeddingCache:
             return None
         return vec
 
-    def get_many(self, content_keys: List[str]) -> Dict[str, np.ndarray]:
+    def get_many(self, content_keys: list[str]) -> dict[str, np.ndarray]:
         """Batch variant of :meth:`get` for a list of keys.
 
         Args:
@@ -116,7 +112,7 @@ class EmbeddingCache:
         Returns:
             Dict containing only the keys that hit, mapped to ``float32`` vectors.
         """
-        out: Dict[str, np.ndarray] = {}
+        out: dict[str, np.ndarray] = {}
         if not content_keys:
             return out
         # Chunk to stay under SQLite's variable limit (999).
@@ -125,7 +121,7 @@ class EmbeddingCache:
                 chunk = content_keys[start : start + 900]
                 placeholders = ",".join("?" * len(chunk))
                 rows = self._conn.execute(
-                    f"SELECT content_key, vector FROM embeddings "
+                    f"SELECT content_key, vector FROM embeddings "  # nosec B608: only "?" placeholders
                     f"WHERE model_key=? AND content_key IN ({placeholders})",
                     (self.model_key, *chunk),
                 ).fetchall()
@@ -144,7 +140,7 @@ class EmbeddingCache:
         """
         self.put_many({content_key: vector})
 
-    def put_many(self, items: Dict[str, np.ndarray]) -> None:
+    def put_many(self, items: dict[str, np.ndarray]) -> None:
         """Bulk upsert vectors in a single transaction.
 
         Args:
@@ -177,7 +173,7 @@ class EmbeddingCache:
         with self._lock:
             self._conn.close()
 
-    def __enter__(self) -> "EmbeddingCache":
+    def __enter__(self) -> EmbeddingCache:
         return self
 
     def __exit__(self, *exc) -> None:

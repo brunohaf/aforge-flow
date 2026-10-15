@@ -6,13 +6,13 @@ import gc
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
 from PIL import Image
 
-from aforge_flow.config import MODEL_BY_CATEGORY, AssetCategory, Config
+from aforge_flow.config import MODEL_BY_CATEGORY, AssetCategory, Config, RembgModel
 from aforge_flow.processors.base import BaseProcessor, ProcessorResult
 from aforge_flow.utils import is_image, validate_file
 
@@ -105,6 +105,7 @@ def composite_mask(original: Image.Image, mask: Image.Image) -> Image.Image:
     *_, alpha = mask.split()
     return Image.merge("RGBA", (r, g, b, alpha))
 
+
 class BackgroundRemovalProcessor(BaseProcessor):
     """Remove image backgrounds using `rembg` and an ONNX segmentation model.
 
@@ -130,19 +131,17 @@ class BackgroundRemovalProcessor(BaseProcessor):
     _gpu_lock: threading.Lock = threading.Lock()
     """Serialises GPU calls across all instances to prevent concurrent VRAM exhaustion."""
 
-    def __init__(self, config: Config, category: Optional[AssetCategory] = None) -> None:
+    def __init__(self, config: Config, category: AssetCategory | None = None) -> None:
         super().__init__(config)
 
         self.category = category or config.rembg_category
         self.model_name: str = (
-            MODEL_BY_CATEGORY[self.category].value
-            if self.category in MODEL_BY_CATEGORY
-            else config.rembg_model.value
-        )
+            config.rembg_model or MODEL_BY_CATEGORY.get(self.category, RembgModel.BRIA_RMBG)
+        ).value
         self.use_gpu: bool = config.use_gpu
 
         # Lazily-built CPU session, reused as the OOM fallback for every image.
-        self._cpu_session: Optional[BaseSession] = None
+        self._cpu_session: BaseSession | None = None
 
         logger.info("initializing_processor", model=self.model_name, category=self.category)
         self.session: BaseSession = self._create_session()
@@ -233,7 +232,6 @@ class BackgroundRemovalProcessor(BaseProcessor):
         """
         return is_image(input_path)
 
-
     def _segment(self, source: Image.Image, remove_fn, session: BaseSession) -> Image.Image:
         """Run rembg segmentation and refine the mask onto the full-res *source*.
 
@@ -275,7 +273,7 @@ class BackgroundRemovalProcessor(BaseProcessor):
         Returns:
             A :class:`ProcessorResult` describing the outcome.
         """
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -301,10 +299,9 @@ class BackgroundRemovalProcessor(BaseProcessor):
                     attempt=attempt,
                 )
                 with self._gpu_lock:
-                    self._flush_gpu_memory()  # drops the corrupted GPU session
+                    self._flush_gpu_memory()
                 time.sleep(0.5 * attempt)
 
-        # GPU could not fit the image — fall back to CPU rather than fail it.
         if self.config.cpu_fallback_on_oom:
             logger.warning("oom_cpu_fallback", input=str(input_path))
             try:
@@ -366,7 +363,9 @@ class BackgroundRemovalProcessor(BaseProcessor):
         except Exception as exc:
             return ProcessorResult(input_path, success=False, error=f"Failed to open image: {exc}")
 
-        logger.info("processing_start", input=str(input_path), model=self.model_name, size=source.size)
+        logger.info(
+            "processing_start", input=str(input_path), model=self.model_name, size=source.size
+        )
 
         return self._remove_with_retry(input_path, source, output_path, rembg_remove)
 
@@ -384,7 +383,7 @@ class BackgroundRemovalProcessor(BaseProcessor):
             Destination path under :attr:`config.output_dir` with ``_nobg``
             appended to the stem and the extension replaced with ``.png``.
         """
-        relative = input_path.relative_to(self.config.input_dir)
+        relative = self.relative_to_roots(input_path)
         return self.config.output_dir / relative.parent / f"{input_path.stem}_nobg.png"
 
     def _refine_edges(self, source: Image.Image, mask: Image.Image) -> Image.Image:
@@ -548,14 +547,14 @@ def decontaminate_edges(image: Image.Image, radius: int = 1) -> Image.Image:
     Returns:
         A new RGBA ``Image`` with edge colors corrected.
     """
-    rgba = np.array(image, dtype=np.float32)          # (H, W, 4)
+    rgba = np.array(image, dtype=np.float32)
     rgb, alpha = rgba[..., :3], rgba[..., 3]
 
-    opaque_mask = alpha > 240                          # fully-opaque pixels
-    fringe_mask = (alpha > 0) & ~opaque_mask          # semi-transparent edge
+    opaque_mask = alpha > 240
+    fringe_mask = (alpha > 0) & ~opaque_mask
 
     if not fringe_mask.any():
-        return image                                   # nothing to fix
+        return image
 
     corrected = rgb.copy()
 
@@ -564,7 +563,7 @@ def decontaminate_edges(image: Image.Image, radius: int = 1) -> Image.Image:
     ys, xs = np.where(fringe_mask)
     h, w = alpha.shape
 
-    for y, x in zip(ys, xs):
+    for y, x in zip(ys, xs, strict=True):
         y0, y1 = max(0, y - radius), min(h, y + radius + 1)
         x0, x1 = max(0, x - radius), min(w, x + radius + 1)
 
@@ -599,20 +598,21 @@ def decontaminate_edges_wip(image: Image.Image, radius: int = 1) -> Image.Image:
     Returns:
         A new RGBA ``Image`` with edge colors corrected.
     """
-    rgba  = np.array(image, dtype=np.float32)
-    rgb   = rgba[..., :3]
+    rgba = np.array(image, dtype=np.float32)
+    rgb = rgba[..., :3]
     alpha = rgba[..., 3]
 
     opaque_mask = alpha > 240
 
     # Near-white fully-opaque pixels touching the edge of the subject
     # are likely background bleed even though alpha=255.
-    channel_max  = rgb.max(axis=-1)
-    channel_min  = rgb.min(axis=-1)
+    channel_max = rgb.max(axis=-1)
+    channel_min = rgb.min(axis=-1)
     is_near_white = (channel_min > 230) & ((channel_max - channel_min) < 15)
 
     # Build a boundary mask: opaque pixels adjacent to transparent ones.
     from scipy.ndimage import binary_dilation
+
     transparent_mask = alpha < 10
     boundary = binary_dilation(transparent_mask, iterations=radius) & opaque_mask
 
@@ -625,14 +625,13 @@ def decontaminate_edges_wip(image: Image.Image, radius: int = 1) -> Image.Image:
     ys, xs = np.where(fringe_mask)
     h, w = alpha.shape
 
-    for y, x in zip(ys, xs):
+    for y, x in zip(ys, xs, strict=True):
         y0, y1 = max(0, y - radius), min(h, y + radius + 1)
         x0, x1 = max(0, x - radius), min(w, x + radius + 1)
 
-        # Only sample from opaque non-white neighbors as color reference
-        neighbor_opaque    = opaque_mask[y0:y1, x0:x1]
+        neighbor_opaque = opaque_mask[y0:y1, x0:x1]
         neighbor_not_white = ~is_near_white[y0:y1, x0:x1]
-        good_neighbors     = neighbor_opaque & neighbor_not_white
+        good_neighbors = neighbor_opaque & neighbor_not_white
 
         if good_neighbors.any():
             corrected[y, x] = rgb[y0:y1, x0:x1][good_neighbors].mean(axis=0)
@@ -643,6 +642,7 @@ def decontaminate_edges_wip(image: Image.Image, radius: int = 1) -> Image.Image:
     result = rgba.copy()
     result[..., :3] = corrected
     return Image.fromarray(result.astype(np.uint8), mode="RGBA")
+
 
 def erode_alpha(image: Image.Image, pixels: int = 1) -> Image.Image:
     """Shrink the alpha channel by *pixels* to trim stray fringe pixels.
@@ -723,11 +723,11 @@ def apply_alpha_matting(
         mask_small = mask
 
     source_np = np.array(original_small, dtype=np.float64) / 255.0
-    alpha_np  = np.array(mask_small.getchannel("A"), dtype=np.float64) / 255.0
+    alpha_np = np.array(mask_small.getchannel("A"), dtype=np.float64) / 255.0
 
-    binary    = alpha_np > 0.5
+    binary = alpha_np > 0.5
     structure = np.ones((erode_structure_size, erode_structure_size), dtype=bool)
-    definite_fg = binary_erosion(binary,  structure=structure)
+    definite_fg = binary_erosion(binary, structure=structure)
     definite_bg = ~binary_dilation(binary, structure=structure)
 
     trimap = np.full(alpha_np.shape, 0.5)

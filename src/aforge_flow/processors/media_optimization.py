@@ -1,9 +1,8 @@
 """Media optimization processor for video and image transcoding."""
 
 import subprocess
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
-from typing import List, Optional
 
 import structlog
 from PIL import Image
@@ -41,7 +40,7 @@ QUALITY_PRESETS = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _encoder_available(name: str) -> bool:
     """Return True if the given ffmpeg encoder (e.g. ``av1_nvenc``) is present.
 
@@ -65,8 +64,8 @@ class MediaOptimizationProcessor(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        image_format: Optional[MediaFormat] = None,
-        video_format: Optional[MediaFormat] = None,
+        image_format: MediaFormat | None = None,
+        video_format: MediaFormat | None = None,
     ):
         """
         Initialize media optimization processor.
@@ -102,7 +101,6 @@ class MediaOptimizationProcessor(BaseProcessor):
         Returns:
             ProcessorResult with optimized file
         """
-        # Validate input
         is_valid, error_msg = validate_file(input_path)
         if not is_valid:
             return ProcessorResult(input_path, success=False, error=error_msg)
@@ -149,20 +147,21 @@ class MediaOptimizationProcessor(BaseProcessor):
                 output_format=self.image_format.value,
             )
 
-            # Open and optimize image
             try:
                 image = Image.open(input_path)
 
-                # Convert RGBA to RGB if saving as JPEG
-                if self.image_format in {MediaFormat.JPEG, MediaFormat.JPG} and image.mode == "RGBA":
+                if (
+                    self.image_format in {MediaFormat.JPEG, MediaFormat.JPG}
+                    and image.mode == "RGBA"
+                ):
                     rgb_image = Image.new("RGB", image.size, (255, 255, 255))
-                    rgb_image.paste(image, mask=image.split()[3] if len(image.split()) == 4 else None)
+                    rgb_image.paste(
+                        image, mask=image.split()[3] if len(image.split()) == 4 else None
+                    )
                     image = rgb_image
 
-                # Get quality settings
                 quality_preset = QUALITY_PRESETS[self.compression_level]["image"]
 
-                # Save optimized image
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 image.save(
                     output_path,
@@ -170,7 +169,6 @@ class MediaOptimizationProcessor(BaseProcessor):
                     optimize=True,
                 )
 
-                # Verify output
                 if self.config.verify_integrity and not output_path.exists():
                     raise OSError("Output file was not created")
 
@@ -228,7 +226,6 @@ class MediaOptimizationProcessor(BaseProcessor):
                     metadata={"skipped": True},
                 )
 
-            # Build FFmpeg command
             video_encoder = self._select_video_encoder()
             self.logger.info(
                 "processing_video",
@@ -238,11 +235,8 @@ class MediaOptimizationProcessor(BaseProcessor):
             )
 
             quality_preset = QUALITY_PRESETS[self.compression_level]["video"]
-            cmd = self._build_ffmpeg_command(
-                input_path, output_path, quality_preset, video_encoder
-            )
+            cmd = self._build_ffmpeg_command(input_path, output_path, quality_preset, video_encoder)
 
-            # Run FFmpeg
             try:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 subprocess.run(
@@ -250,10 +244,9 @@ class MediaOptimizationProcessor(BaseProcessor):
                     check=True,
                     capture_output=True,
                     text=True,
-                    timeout=3600,  # 1 hour timeout
+                    timeout=3600,
                 )
 
-                # Verify output
                 if self.config.verify_integrity and not output_path.exists():
                     raise OSError("Output file was not created")
 
@@ -311,7 +304,7 @@ class MediaOptimizationProcessor(BaseProcessor):
         output_path: Path,
         quality_preset: dict,
         video_encoder: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """Build FFmpeg command for video transcoding.
 
         Codec, audio codec, and quality args are all selected per-encoder: WebM
@@ -319,28 +312,40 @@ class MediaOptimizationProcessor(BaseProcessor):
         ``-cq``/``-preset pN`` controls, and libvpx-vp9 uses ``-crf`` with
         ``-row-mt``/``-cpu-used`` for speed (it ignores ``-preset``).
         """
-        cmd: List[str] = ["ffmpeg", "-i", str(input_path), "-c:v", video_encoder]
+        cmd: list[str] = ["ffmpeg", "-i", str(input_path), "-c:v", video_encoder]
 
         if video_encoder == "av1_nvenc":
             cmd += [
-                "-preset", "p5",
-                "-rc", "vbr",
-                "-cq", str(quality_preset["cq"]),
-                "-b:v", "0",
-                "-pix_fmt", "yuv420p",
+                "-preset",
+                "p5",
+                "-rc",
+                "vbr",
+                "-cq",
+                str(quality_preset["cq"]),
+                "-b:v",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
             ]
         elif video_encoder == "libvpx-vp9":
             cmd += [
-                "-crf", str(quality_preset["crf"]),
-                "-b:v", "0",
-                "-row-mt", "1",
-                "-deadline", "good",
-                "-cpu-used", str(quality_preset["cpu_used"]),
+                "-crf",
+                str(quality_preset["crf"]),
+                "-b:v",
+                "0",
+                "-row-mt",
+                "1",
+                "-deadline",
+                "good",
+                "-cpu-used",
+                str(quality_preset["cpu_used"]),
             ]
         else:  # libx264
             cmd += [
-                "-crf", str(quality_preset["crf"]),
-                "-preset", quality_preset["preset"],
+                "-crf",
+                str(quality_preset["crf"]),
+                "-preset",
+                quality_preset["preset"],
             ]
 
         # WebM only supports Opus/Vorbis audio; everything else uses AAC.
@@ -349,5 +354,5 @@ class MediaOptimizationProcessor(BaseProcessor):
         else:
             cmd += ["-c:a", "aac", "-b:a", "128k"]
 
-        cmd += ["-y", str(output_path)]  # -y overwrites output
+        cmd += ["-y", str(output_path)]
         return cmd

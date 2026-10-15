@@ -51,11 +51,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 import structlog
-from aforge_flow.config import ClipModelChoice, Config
+from PIL import Image
+
+from aforge_flow.config import ClipModelChoice, Config, hf_revision
 from aforge_flow.processors.base import BaseProcessor, ProcessorResult
 from aforge_flow.processors.caption_naming import perceptual_hash
 from aforge_flow.taxonomy import (
@@ -66,7 +68,6 @@ from aforge_flow.taxonomy import (
 )
 from aforge_flow.utils import is_image, validate_file
 from aforge_flow.utils.embedding_cache import EmbeddingCache
-from PIL import Image
 
 if TYPE_CHECKING:
     import torch  # noqa: F401
@@ -76,7 +77,7 @@ logger = structlog.get_logger(__name__)
 
 # HF model ids per encoder choice. ``is_siglip`` controls processor padding
 # and the matching convention (sigmoid-trained vs softmax-trained towers).
-_ENCODER_REGISTRY: Dict[ClipModelChoice, Dict[str, object]] = {
+_ENCODER_REGISTRY: dict[ClipModelChoice, dict[str, object]] = {
     ClipModelChoice.SIGLIP2: {
         "hf_id": "google/siglip2-so400m-patch14-384",
         "is_siglip": True,
@@ -110,7 +111,7 @@ class ClipEncoder:
     The model is loaded lazily and lives on the configured device.
     """
 
-    def __init__(self, choice: ClipModelChoice, device: str, cache_dir: Optional[Path] = None):
+    def __init__(self, choice: ClipModelChoice, device: str, cache_dir: Path | None = None):
         """Load the encoder selected by *choice* onto *device*.
 
         Args:
@@ -139,11 +140,15 @@ class ClipEncoder:
 
         logger.info("loading_clip_encoder", model=self.hf_id, device=device)
         kwargs = {"cache_dir": str(cache_dir)} if cache_dir else {}
+        revision = hf_revision(self.hf_id)
         self.model = AutoModel.from_pretrained(
-            self.hf_id, torch_dtype=torch.float16 if device == "cuda" else torch.float32, **kwargs
+            self.hf_id,
+            revision=revision,
+            dtype=torch.float16 if device == "cuda" else torch.float32,
+            **kwargs,
         ).to(device)
         self.model.eval()
-        self.processor = AutoProcessor.from_pretrained(self.hf_id, **kwargs)
+        self.processor = AutoProcessor.from_pretrained(self.hf_id, revision=revision, **kwargs)
 
         # Probe embedding dim with a 1x1 dummy so the cache can validate it.
         with torch.no_grad():
@@ -157,14 +162,14 @@ class ClipEncoder:
         """Stable cache namespace: HF id + dim (survives prompt edits)."""
         return f"{self.hf_id}|d{self.dim}"
 
-    def _image_features(self, images: List[Image.Image]) -> np.ndarray:
+    def _image_features(self, images: list[Image.Image]) -> np.ndarray:
         inputs = self.processor(images=images, return_tensors="pt").to(self.device)
         if self.device == "cuda":
             inputs = {k: v.half() if v.is_floating_point() else v for k, v in inputs.items()}
         feats = self.model.get_image_features(**inputs)
         return feats.float().cpu().numpy()
 
-    def encode_images(self, images: List[Image.Image]) -> np.ndarray:
+    def encode_images(self, images: list[Image.Image]) -> np.ndarray:
         """Embed a batch of PIL images.
 
         Args:
@@ -177,7 +182,7 @@ class ClipEncoder:
             feats = self._image_features(images)
         return l2_normalize(feats)
 
-    def encode_texts(self, texts: List[str]) -> np.ndarray:
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
         """Embed a batch of text prompts.
 
         Args:
@@ -187,15 +192,17 @@ class ClipEncoder:
             ``(N, dim)`` L2-normalised ``float32`` array.
         """
         torch = self._torch
-        inputs = self.processor(
-            text=texts, return_tensors="pt", padding=True, truncation=True
-        ).to(self.device)
+        inputs = self.processor(text=texts, return_tensors="pt", padding=True, truncation=True).to(
+            self.device
+        )
         with torch.no_grad():
             feats = self.model.get_text_features(**inputs)
         return l2_normalize(feats.float().cpu().numpy())
 
 
-def build_prototypes(encoder: ClipEncoder, classes: List[LabelPrompts]) -> Tuple[List[str], np.ndarray]:
+def build_prototypes(
+    encoder: ClipEncoder, classes: list[LabelPrompts]
+) -> tuple[list[str], np.ndarray]:
     """Embed and average each class's prompt ensemble into one prototype.
 
     Args:
@@ -206,11 +213,11 @@ def build_prototypes(encoder: ClipEncoder, classes: List[LabelPrompts]) -> Tuple
         ``(labels, prototypes)`` where ``labels`` are the canonical labels and
         ``prototypes`` is an ``(num_classes, dim)`` L2-normalised array.
     """
-    labels: List[str] = []
-    vectors: List[np.ndarray] = []
+    labels: list[str] = []
+    vectors: list[np.ndarray] = []
     for lp in classes:
-        emb = encoder.encode_texts(lp.prompts)  # (k, dim), already normalised
-        proto = l2_normalize(emb.mean(axis=0, keepdims=True))[0]  # average then renormalise
+        emb = encoder.encode_texts(lp.prompts)
+        proto = l2_normalize(emb.mean(axis=0, keepdims=True))[0]
         labels.append(lp.label)
         vectors.append(proto)
     return labels, np.vstack(vectors)
@@ -218,10 +225,10 @@ def build_prototypes(encoder: ClipEncoder, classes: List[LabelPrompts]) -> Tuple
 
 def classify_against(
     image_vec: np.ndarray,
-    labels: List[str],
+    labels: list[str],
     prototypes: np.ndarray,
     temperature: float,
-) -> Tuple[str, float, float, np.ndarray]:
+) -> tuple[str, float, float, np.ndarray]:
     """Score one image embedding against prototypes.
 
     Confidence is a temperature-scaled softmax over the candidate classes —
@@ -270,29 +277,18 @@ class CreatureClassificationProcessor(BaseProcessor):
         super().__init__(config)
         self.device = "cuda" if config.use_gpu else "cpu"
 
-        self._choice: ClipModelChoice = getattr(
-            config, "clip_model", ClipModelChoice.SIGLIP2
-        )
-        self._conf_threshold: float = getattr(
-            config, "classification_confidence_threshold", 0.85
-        )
-        self._margin_threshold: float = getattr(
-            config, "classification_margin_threshold", 0.10
-        )
+        self._choice: ClipModelChoice = getattr(config, "clip_model", ClipModelChoice.SIGLIP2)
+        self._conf_threshold: float = getattr(config, "classification_confidence_threshold", 0.85)
+        self._margin_threshold: float = getattr(config, "classification_margin_threshold", 0.10)
         self._temperature: float = getattr(config, "classification_temperature", 0.01)
         self._batch_size: int = getattr(config, "classification_batch_size", 32)
         self._write_sidecar: bool = getattr(config, "classification_sidecar", True)
         self._vlm_enabled: bool = getattr(config, "vlm_fallback_enabled", False)
-        self._vlm_model: str = getattr(
-            config, "vlm_model", "Qwen/Qwen2.5-VL-7B-Instruct"
-        )
+        self._vlm_model: str = getattr(config, "vlm_model", "Qwen/Qwen2.5-VL-7B-Instruct")
 
         self.encoder = ClipEncoder(self._choice, self.device, cache_dir=config.cache_dir)
 
-        # Prototypes are cheap — build them once up front.
-        self._type_labels, self._type_protos = build_prototypes(
-            self.encoder, ASSET_TYPE_PROMPTS
-        )
+        self._type_labels, self._type_protos = build_prototypes(self.encoder, ASSET_TYPE_PROMPTS)
         self._cat_labels, self._cat_protos = build_prototypes(
             self.encoder, CREATURE_CATEGORY_PROMPTS
         )
@@ -303,14 +299,12 @@ class CreatureClassificationProcessor(BaseProcessor):
             dim=self.encoder.dim,
         )
 
-        self._vlm = None  # lazily constructed on first uncertain case
+        self._vlm = None
         logger.info(
             "creature_classifier_initialized",
             model=self.encoder.hf_id,
             cached_vectors=self.cache.count(),
         )
-
-    # ----- BaseProcessor contract ----------------------------------------- #
 
     def can_process(self, input_path: Path) -> bool:
         """Return ``True`` for supported image formats."""
@@ -337,21 +331,16 @@ class CreatureClassificationProcessor(BaseProcessor):
         try:
             image = Image.open(input_path).convert("RGB")
         except Exception as exc:
-            return ProcessorResult(
-                input_path, success=False, error=f"Failed to open image: {exc}"
-            )
+            return ProcessorResult(input_path, success=False, error=f"Failed to open image: {exc}")
 
         try:
             image_vec = self._embedding_for(image)
         except Exception as exc:
             logger.exception("embedding_failed", input=str(input_path))
-            return ProcessorResult(
-                input_path, success=False, error=f"Embedding failed: {exc}"
-            )
+            return ProcessorResult(input_path, success=False, error=f"Embedding failed: {exc}")
 
         result_meta = self._classify_vector(image_vec)
 
-        # Confidence workflow: accept directly, else optionally consult the VLM.
         uncertain = (
             result_meta["confidence"] < self._conf_threshold
             or result_meta["category_margin"] < self._margin_threshold
@@ -381,14 +370,12 @@ class CreatureClassificationProcessor(BaseProcessor):
         )
         return ProcessorResult(
             input_path,
-            output_path=input_path,  # pass-through: pixels unchanged
+            output_path=input_path,
             success=True,
             metadata=result_meta,
         )
 
-    # ----- Batch throughput ------------------------------------------------ #
-
-    def precompute_embeddings(self, paths: List[Path]) -> int:
+    def precompute_embeddings(self, paths: list[Path]) -> int:
         """Embed every not-yet-cached picture in *paths* in GPU batches.
 
         Call this once before the per-file pass to turn ``process()`` into a
@@ -401,7 +388,7 @@ class CreatureClassificationProcessor(BaseProcessor):
             Number of *new* embeddings computed and cached.
         """
         # Map content key -> first path that has it (dedupes replicas).
-        pending: Dict[str, Path] = {}
+        pending: dict[str, Path] = {}
         for p in paths:
             if not self.can_process(p):
                 continue
@@ -427,8 +414,6 @@ class CreatureClassificationProcessor(BaseProcessor):
             computed += len(chunk)
             logger.info("precompute_progress", done=computed, total=len(keys))
         return computed
-
-    # ----- internals ------------------------------------------------------- #
 
     @staticmethod
     def _content_key(image: Image.Image) -> str:
@@ -479,7 +464,7 @@ class CreatureClassificationProcessor(BaseProcessor):
         except Exception as exc:  # sidecar is best-effort
             logger.warning("sidecar_write_failed", path=str(sidecar), error=str(exc))
 
-    def _vlm_classify(self, image: Image.Image, image_vec: np.ndarray) -> Optional[dict]:
+    def _vlm_classify(self, image: Image.Image, image_vec: np.ndarray) -> dict | None:
         """Consult the VLM for a single uncertain image.
 
         Lazily constructs the VLM on first use.  Returns a metadata patch with
@@ -487,7 +472,7 @@ class CreatureClassificationProcessor(BaseProcessor):
         gives a hard label), or ``None`` if the VLM is unavailable / off.
         """
         if self._vlm is None:
-            from aforge_flow.processors.creature_classification import (  # local import
+            from aforge_flow.processors.creature_classification import (
                 QwenVLClassifier,
             )
 
@@ -512,7 +497,7 @@ class QwenVLClassifier:
     its VRAM/latency cost is never paid on the confident majority.
     """
 
-    def __init__(self, hf_id: str, device: str, cache_dir: Optional[Path] = None):
+    def __init__(self, hf_id: str, device: str, cache_dir: Path | None = None):
         """Load the VLM (4-bit if ``bitsandbytes`` is available on CUDA).
 
         Args:
@@ -526,23 +511,26 @@ class QwenVLClassifier:
         self._torch = torch
         kwargs: dict = {"cache_dir": str(cache_dir)} if cache_dir else {}
         if device == "cuda":
-            kwargs["torch_dtype"] = torch.float16
+            kwargs["dtype"] = torch.float16
             kwargs["device_map"] = "auto"
-            try:  # optional 4-bit to fit a 7B model on a 12 GB 4070
+            try:  # optional 4-bit so a 7B model fits a 12 GB GPU
                 from transformers import BitsAndBytesConfig
 
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
             except Exception:
                 logger.info("bitsandbytes_unavailable_loading_fp16")
         logger.info("loading_vlm", model=hf_id, device=device)
-        self.processor = AutoProcessor.from_pretrained(hf_id, **({"cache_dir": str(cache_dir)} if cache_dir else {}))
-        self.model = AutoModelForImageTextToText.from_pretrained(hf_id, **kwargs)
+        revision = hf_revision(hf_id)
+        self.processor = AutoProcessor.from_pretrained(
+            hf_id, revision=revision, **({"cache_dir": str(cache_dir)} if cache_dir else {})
+        )
+        self.model = AutoModelForImageTextToText.from_pretrained(hf_id, revision=revision, **kwargs)
         if device != "cuda":
             self.model = self.model.to(device)
         self.model.eval()
         self.device = device
 
-    def classify_category(self, image: Image.Image, labels: List[str]) -> Optional[str]:
+    def classify_category(self, image: Image.Image, labels: list[str]) -> str | None:
         """Return the VLM-chosen creature category, or ``None`` if unparseable.
 
         Args:
@@ -573,9 +561,13 @@ class QwenVLClassifier:
         inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.device)
         with self._torch.no_grad():
             out = self.model.generate(**inputs, max_new_tokens=16, do_sample=False)
-        reply = self.processor.batch_decode(
-            out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
-        )[0].strip().lower()
+        reply = (
+            self.processor.batch_decode(
+                out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )[0]
+            .strip()
+            .lower()
+        )
         for label in labels:
             if label.lower() in reply:
                 return label

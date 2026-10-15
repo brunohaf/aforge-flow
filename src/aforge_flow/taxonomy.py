@@ -43,7 +43,6 @@ import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List
 
 
 @dataclass(frozen=True)
@@ -59,19 +58,17 @@ class LabelPrompts:
     """
 
     label: str
-    prompts: List[str] = field(default_factory=list)
+    prompts: list[str] = field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
 # Level 1 — Asset type
 #
 # We do not ask CLIP for "Portrait" / "Token" directly.  Those words are
 # overloaded (a "token" is also a coin / a software token).  Instead we
 # describe the *visual format* with several phrasings each, then map the
 # winning fine-grained format back to the two normalised buckets below.
-# --------------------------------------------------------------------------- #
 
-ASSET_TYPE_NORMALIZATION: Dict[str, str] = {
+ASSET_TYPE_NORMALIZATION: dict[str, str] = {
     "battle_token": "Token",
     "portrait": "Portrait",
     "character_illustration": "Portrait",
@@ -81,7 +78,7 @@ ASSET_TYPE_NORMALIZATION: Dict[str, str] = {
 asset types required by the output schema (``"Portrait"`` / ``"Token"``)."""
 
 
-ASSET_TYPE_PROMPTS: List[LabelPrompts] = [
+ASSET_TYPE_PROMPTS: list[LabelPrompts] = [
     LabelPrompts(
         "battle_token",
         [
@@ -118,15 +115,13 @@ ASSET_TYPE_PROMPTS: List[LabelPrompts] = [
 ]
 
 
-# --------------------------------------------------------------------------- #
 # Level 2 — D&D creature category (the 14 official creature types)
 #
 # Each prompt describes the *visual archetype* of the type as it appears in
 # fantasy art, not the rules definition.  Several phrasings per class are
 # ensembled into one prototype vector.
-# --------------------------------------------------------------------------- #
 
-CREATURE_CATEGORY_PROMPTS: List[LabelPrompts] = [
+CREATURE_CATEGORY_PROMPTS: list[LabelPrompts] = [
     LabelPrompts(
         "Aberration",
         [
@@ -242,17 +237,16 @@ CREATURE_CATEGORY_PROMPTS: List[LabelPrompts] = [
 ]
 
 
-def asset_type_labels() -> List[str]:
+def asset_type_labels() -> list[str]:
     """Return the fine-grained asset-type labels in prototype order."""
     return [lp.label for lp in ASSET_TYPE_PROMPTS]
 
 
-def creature_category_labels() -> List[str]:
+def creature_category_labels() -> list[str]:
     """Return the 14 canonical creature-category labels in prototype order."""
     return [lp.label for lp in CREATURE_CATEGORY_PROMPTS]
 
 
-# --------------------------------------------------------------------------- #
 # Creature name bank
 #
 # A curated vocabulary of canonical creature *names*, grouped by the same 14
@@ -261,14 +255,13 @@ def creature_category_labels() -> List[str]:
 # the Qwen caption backend, so generated filenames prefer real creatures
 # (``mind-flayer``) over invented phrasings.  The data lives in an editable
 # JSON file next to this module so non-developers can extend it.
-# --------------------------------------------------------------------------- #
 
 CREATURE_NAMES_PATH = Path(__file__).with_name("creature_names.json")
 """Location of the editable name-bank JSON, shipped alongside this module."""
 
 
 @lru_cache(maxsize=1)
-def load_creature_names() -> Dict[str, List[str]]:
+def load_creature_names() -> dict[str, list[str]]:
     """Load the creature name bank, keyed by canonical creature-category label.
 
     The JSON may carry a leading ``_comment`` key (and any other underscore-
@@ -298,7 +291,7 @@ def load_creature_names() -> Dict[str, List[str]]:
     return names
 
 
-def creature_name_prompt_block(names: Dict[str, List[str]] | None = None) -> str:
+def creature_name_prompt_block(names: dict[str, list[str]] | None = None) -> str:
     """Render the name bank as a compact, type-grouped block for an LLM prompt.
 
     Produces one line per creature type, e.g.::

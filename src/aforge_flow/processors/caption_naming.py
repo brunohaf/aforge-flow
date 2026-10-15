@@ -28,12 +28,11 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
 
 import structlog
 from PIL import Image
 
-from aforge_flow.config import CaptionBackend, Config
+from aforge_flow.config import CaptionBackend, Config, hf_revision
 from aforge_flow.processors.base import BaseProcessor, ProcessorResult
 from aforge_flow.utils import is_image, validate_file
 
@@ -60,13 +59,50 @@ DEFAULT_SLUG_MAX_WORDS = 5
 Override via ``config.slug_max_words``."""
 
 # Words removed from captions so slugs stay short and "fantasy-like".
-_FILLER_WORDS = frozenset({
-    "a", "an", "the", "of", "with", "and", "is", "are", "this", "that",
-    "his", "her", "their", "to", "in", "on", "at", "as", "it", "for",
-    "person", "man", "woman", "character", "portrait", "image", "picture",
-    "photo", "illustration", "artwork", "drawing", "render", "rendering",
-    "there", "who", "wearing", "standing", "sitting", "some", "they",
-})
+_FILLER_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "of",
+        "with",
+        "and",
+        "is",
+        "are",
+        "this",
+        "that",
+        "his",
+        "her",
+        "their",
+        "to",
+        "in",
+        "on",
+        "at",
+        "as",
+        "it",
+        "for",
+        "person",
+        "man",
+        "woman",
+        "character",
+        "portrait",
+        "image",
+        "picture",
+        "photo",
+        "illustration",
+        "artwork",
+        "drawing",
+        "render",
+        "rendering",
+        "there",
+        "who",
+        "wearing",
+        "standing",
+        "sitting",
+        "some",
+        "they",
+    }
+)
 
 # Mundane caption words BLIP tends to emit, mapped to fantasy-creature
 # equivalents so a "dolphin with tentacles" becomes an "aberration with
@@ -75,7 +111,6 @@ _FILLER_WORDS = frozenset({
 # length limit. Extend via ``config`` is intentionally not supported — keep
 # the vocabulary curated here so output stays consistent across runs.
 _CREATURE_SYNONYMS = {
-    # aquatic / tentacled -> aberrations
     "dolphin": "aberration",
     "whale": "aberration",
     "fish": "aberration",
@@ -86,7 +121,6 @@ _CREATURE_SYNONYMS = {
     "jellyfish": "gibbering-mouther",
     "slug": "gibbering-mouther",
     "worm": "gibbering-mouther",
-    # reptiles -> draconic / serpentine
     "lizard": "dragonkin",
     "crocodile": "dragonkin",
     "alligator": "dragonkin",
@@ -94,7 +128,6 @@ _CREATURE_SYNONYMS = {
     "turtle": "dragon-turtle",
     "frog": "slaad",
     "toad": "slaad",
-    # mammals -> monstrous counterparts
     "dog": "hellhound",
     "wolf": "dire-wolf",
     "cat": "displacer-beast",
@@ -105,7 +138,6 @@ _CREATURE_SYNONYMS = {
     "bat": "stirge",
     "ape": "ogre",
     "monkey": "imp",
-    # birds / insects
     "bird": "harpy",
     "owl": "owlbear",
     "crow": "harpy",
@@ -113,7 +145,6 @@ _CREATURE_SYNONYMS = {
     "spider": "phase-spider",
     "scorpion": "phase-spider",
     "insect": "swarm",
-    # humanoids
     "soldier": "warrior",
     "knight": "paladin",
     "monster": "aberration",
@@ -165,29 +196,51 @@ def simplify_caption(
 
     prefix = prompt_prefix.lower().strip()
     if prefix and text.startswith(prefix):
-        text = text[len(prefix):].strip()
+        text = text[len(prefix) :].strip()
 
-    words: List[str] = []
+    words: list[str] = []
     for token in re.findall(r"[a-z0-9]+", text):
         if token in _FILLER_WORDS:
             continue
-        # Translate mundane animals/objects into fantasy creatures.
         words.append(_CREATURE_SYNONYMS.get(token, token))
         if len(words) >= max_words:
             break
 
-    # Fall back to the raw caption if filtering removed everything.
     slug = caption_to_slug("-".join(words)) if words else caption_to_slug(caption)
     return slug
 
 
 # Tokens the asset pipeline appends to filenames; carry no naming value and
 # are stripped before deciding whether a source name is meaningful.
-_PIPELINE_NOISE = frozenset({
-    "nobg", "no", "bg", "rembg", "cutout", "cutouts", "alpha", "transparent",
-    "optimized", "optimised", "optim", "opt", "scaled", "upscaled", "resized",
-    "final", "copy", "edit", "edited", "v1", "v2", "webp", "png", "jpg", "jpeg",
-})
+_PIPELINE_NOISE = frozenset(
+    {
+        "nobg",
+        "no",
+        "bg",
+        "rembg",
+        "cutout",
+        "cutouts",
+        "alpha",
+        "transparent",
+        "optimized",
+        "optimised",
+        "optim",
+        "opt",
+        "scaled",
+        "upscaled",
+        "resized",
+        "final",
+        "copy",
+        "edit",
+        "edited",
+        "v1",
+        "v2",
+        "webp",
+        "png",
+        "jpg",
+        "jpeg",
+    }
+)
 
 
 def _looks_like_id(token: str) -> bool:
@@ -214,7 +267,7 @@ def source_name_slug(
     stem: str,
     *,
     max_words: int = DEFAULT_SLUG_MAX_WORDS,
-) -> Optional[str]:
+) -> str | None:
     """Derive a slug from an existing *meaningful* source filename.
 
     Slugifies *stem*, drops pipeline-noise suffixes (``_nobg``, ``_optimized``,
@@ -235,17 +288,14 @@ def source_name_slug(
         name carries no meaningful words.
     """
     tokens = [t for t in caption_to_slug(stem).split("-") if t]
-    kept = [
-        t for t in tokens
-        if t not in _PIPELINE_NOISE and not _looks_like_id(t)
-    ]
+    kept = [t for t in tokens if t not in _PIPELINE_NOISE and not _looks_like_id(t)]
 
     # Require at least one genuine word so IDs like "900297781783671446" or
     # "af49b6a5..." (after noise stripping) fall through to captioning.
     if not any(any(c.isalpha() for c in t) and len(t) >= 3 for t in kept):
         return None
 
-    words: List[str] = []
+    words: list[str] = []
     for token in kept:
         if token in _FILLER_WORDS:
             continue
@@ -271,9 +321,7 @@ def perceptual_hash(image: Image.Image, hash_size: int = 8) -> int:
     Returns:
         The hash as an integer.
     """
-    resized = image.convert("L").resize(
-        (hash_size + 1, hash_size), Image.Resampling.LANCZOS
-    )
+    resized = image.convert("L").resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS)
     pixels = list(resized.getdata())
     row_stride = hash_size + 1
 
@@ -314,12 +362,13 @@ class _BlipBackend:
         self.slug_prefix: str = getattr(config, "caption_prompt", FANTASY_PROMPT)
         cache_dir = getattr(config, "cache_dir", None)
         kwargs = {"cache_dir": str(cache_dir)} if cache_dir else {}
+        revision = hf_revision(MODEL_ID)
 
         logger.info("loading_caption_model", backend=self.name, model=MODEL_ID, device=device)
-        self._processor = BlipProcessor.from_pretrained(MODEL_ID, **kwargs)
-        self._model = (
-            BlipForConditionalGeneration.from_pretrained(MODEL_ID, **kwargs).to(device)
-        )
+        self._processor = BlipProcessor.from_pretrained(MODEL_ID, revision=revision, **kwargs)
+        self._model = BlipForConditionalGeneration.from_pretrained(
+            MODEL_ID, revision=revision, **kwargs
+        ).to(device)
         logger.info("caption_model_loaded", backend=self.name, model=MODEL_ID, device=device)
 
     def caption(self, image: Image.Image, max_new_tokens: int = 30) -> str:
@@ -327,9 +376,9 @@ class _BlipBackend:
         import torch
 
         if self.slug_prefix:
-            inputs = self._processor(
-                image, text=self.slug_prefix, return_tensors="pt"
-            ).to(self.device)
+            inputs = self._processor(image, text=self.slug_prefix, return_tensors="pt").to(
+                self.device
+            )
         else:
             inputs = self._processor(image, return_tensors="pt").to(self.device)
 
@@ -338,8 +387,8 @@ class _BlipBackend:
             output = self._model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                num_beams=3,        # deterministic beam search
-                do_sample=False,    # no randomness
+                num_beams=3,
+                do_sample=False,
             )
         return self._processor.decode(output[0], skip_special_tokens=True)
 
@@ -402,7 +451,7 @@ class _QwenBackend:
 
         kwargs: dict = dict(cache_kwargs)
         if device == "cuda":
-            kwargs["torch_dtype"] = torch.float16
+            kwargs["dtype"] = torch.float16
             kwargs["device_map"] = "auto"
             try:  # optional 4-bit so a 7B model fits a 12 GB GPU
                 from transformers import BitsAndBytesConfig
@@ -412,8 +461,11 @@ class _QwenBackend:
                 logger.info("bitsandbytes_unavailable_loading_fp16")
 
         logger.info("loading_caption_model", backend=self.name, model=hf_id, device=device)
-        self._processor = AutoProcessor.from_pretrained(hf_id, **cache_kwargs)
-        self._model = AutoModelForImageTextToText.from_pretrained(hf_id, **kwargs)
+        revision = hf_revision(hf_id)
+        self._processor = AutoProcessor.from_pretrained(hf_id, revision=revision, **cache_kwargs)
+        self._model = AutoModelForImageTextToText.from_pretrained(
+            hf_id, revision=revision, **kwargs
+        )
         if device != "cuda":
             self._model = self._model.to(device)
         self._model.eval()
@@ -438,16 +490,12 @@ class _QwenBackend:
         text = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        inputs = self._processor(
-            text=[text], images=[image], return_tensors="pt"
-        ).to(self.device)
+        inputs = self._processor(text=[text], images=[image], return_tensors="pt").to(self.device)
         with self._torch.no_grad():
-            out = self._model.generate(
-                **inputs, max_new_tokens=max_new_tokens, do_sample=False
-            )
+            out = self._model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
         # Decode only the freshly generated tokens, not the echoed prompt.
         return self._processor.batch_decode(
-            out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True
+            out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
         )[0].strip()
 
 
@@ -467,7 +515,7 @@ class _ReplicaGroup:
     base_slug: str
     caption: str
     count: int = 0
-    members: List[Path] = field(default_factory=list)
+    members: list[Path] = field(default_factory=list)
 
 
 class CaptionRenameProcessor(BaseProcessor):
@@ -497,19 +545,14 @@ class CaptionRenameProcessor(BaseProcessor):
         super().__init__(config)
         self.device = "cuda" if config.use_gpu else "cpu"
 
-        # New, all optional — pulled via getattr for config retrocompat.
+        # Read via getattr so configs predating these fields keep working.
         self._hash_threshold: int = getattr(
             config, "replica_hash_threshold", DEFAULT_HASH_THRESHOLD
         )
-        self._slug_max_words: int = getattr(
-            config, "slug_max_words", DEFAULT_SLUG_MAX_WORDS
-        )
-        self._preserve_source_names: bool = getattr(
-            config, "caption_preserve_source_names", True
-        )
+        self._slug_max_words: int = getattr(config, "slug_max_words", DEFAULT_SLUG_MAX_WORDS)
+        self._preserve_source_names: bool = getattr(config, "caption_preserve_source_names", True)
 
-        # Replica bookkeeping (persists across process() calls).
-        self._groups: List[_ReplicaGroup] = []
+        self._groups: list[_ReplicaGroup] = []
         self._used_base_slugs: set[str] = set()
 
         # The captioning backend (BLIP/Qwen) is loaded lazily on first use, so a
@@ -559,7 +602,6 @@ class CaptionRenameProcessor(BaseProcessor):
         except Exception as exc:
             return ProcessorResult(input_path, success=False, error=f"Failed to open image: {exc}")
 
-        # Identify (or create) the picture group this image belongs to.
         try:
             phash = perceptual_hash(image)
         except Exception as exc:
@@ -585,7 +627,9 @@ class CaptionRenameProcessor(BaseProcessor):
                     caption = self._get_backend().caption(image)
                 except Exception as exc:
                     logger.exception("captioning_failed", input=str(input_path))
-                    return ProcessorResult(input_path, success=False, error=f"Captioning failed: {exc}")
+                    return ProcessorResult(
+                        input_path, success=False, error=f"Captioning failed: {exc}"
+                    )
 
                 slug = simplify_caption(
                     caption,
@@ -663,7 +707,7 @@ class CaptionRenameProcessor(BaseProcessor):
             },
         )
 
-    def _match_group(self, phash: int) -> Optional[_ReplicaGroup]:
+    def _match_group(self, phash: int) -> _ReplicaGroup | None:
         """Return the closest existing group within the hash threshold.
 
         Args:
@@ -673,7 +717,7 @@ class CaptionRenameProcessor(BaseProcessor):
             The best-matching :class:`_ReplicaGroup`, or ``None`` if this is
             a previously unseen picture.
         """
-        best: Optional[_ReplicaGroup] = None
+        best: _ReplicaGroup | None = None
         best_distance = self._hash_threshold + 1
         for group in self._groups:
             distance = hamming_distance(phash, group.phash)
