@@ -1,6 +1,8 @@
 <h1 align="center">
   <br>
-  <b>aforge-flow</b>
+  <img src="docs/assets/aforge-flow-logo.png" alt="aforge" width="200">
+  <br>
+  aforge-flow
   <br>
 </h1>
 
