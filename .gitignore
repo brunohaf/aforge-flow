@@ -1,109 +1,75 @@
-# Byte-compiled / optimized / DLL files
+# Python build and bytecode
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
+/build/
+/dist/
+/lib/
+/lib64/
+*.egg-info/
+*.egg
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
 wheels/
 pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 MANIFEST
 
+# Environments and local config
+.venv/
+venv/
+env/
+.direnv/
+.env
+.env.*
+!.env.example
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Secrets that must never be committed
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.secrets/
+credentials*.json
 
-# Unit test / coverage reports
+# Tooling caches and reports
+.cache/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .tox/
 .nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
 .hypothesis/
-.pytest_cache/
+*.log
 
-# Sphinx documentation
-docs/_build/
-
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# PEP 582
-__pypackages__/
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# IDE
+# Editors and OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Asset Optimizer specific
-.cache/
-output/
-assets/
-*.nobg.*
+# Frontend
+node_modules/
+
+# aforge working data (anchored so docs/assets/ stays tracked)
+/assets/
+/output/
+/.uploads/
+*_nobg.*
 *_optimized.*
+*.classification.json
 
-# Conda
-conda-lock.yml
+# Model weights downloaded at runtime
+*.onnx
+*.safetensors
+*.pth
+*.ckpt
