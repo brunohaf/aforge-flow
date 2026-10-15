@@ -5,11 +5,11 @@ Two modes:
 
 * ``throughput`` — measures end-to-end images/sec for the embedding pre-pass
   (cold, GPU-bound) and for the per-file classify pass (warm, cache hits),
-  plus peak VRAM.  Use it to size batch sizes and project the wall-clock for
-  the full 6,000-asset run.
+  plus peak VRAM.  Use it to size batch sizes and, with ``--project N``, the
+  wall-clock of a cold run over N assets.
 
 * ``eval`` — measures **accuracy** against a hand-labelled validation set and
-  reports the confidence/​margin operating point: how many assets clear the
+  reports the confidence/margin operating point: how many assets clear the
   auto-accept threshold, and what the accuracy is on the confident vs the
   uncertain (VLM-fallback) tail.  This is how you choose
   ``--confidence-threshold`` honestly rather than guessing.
@@ -22,9 +22,9 @@ operating point with useful precision.
 
 Examples
 --------
-    python scripts/benchmark_classifier.py throughput -i assets --batch-size 64
-    python scripts/benchmark_classifier.py throughput --clip-model clip
-    python scripts/benchmark_classifier.py eval --labels val.csv --threshold 0.85
+    python benchmarks/benchmark_classifier.py throughput -i assets --batch-size 64
+    python benchmarks/benchmark_classifier.py throughput --clip-model clip
+    python benchmarks/benchmark_classifier.py eval --labels val.csv --threshold 0.85
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import argparse
 import csv
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from aforge_flow.config import ClipModelChoice, Config
 from aforge_flow.processors.creature_classification import (
@@ -68,8 +67,10 @@ def _peak_vram_gb() -> float:
 
 def run_throughput(args) -> None:
     proc = _make_processor(args)
-    files = get_files_recursively(Path(args.input))[: args.limit] if args.limit else (
-        get_files_recursively(Path(args.input))
+    files = (
+        get_files_recursively(Path(args.input))[: args.limit]
+        if args.limit
+        else (get_files_recursively(Path(args.input)))
     )
     files = [f for f in files if proc.can_process(f)]
     if not files:
@@ -92,15 +93,19 @@ def run_throughput(args) -> None:
     classify_rate = len(files) / t_classify if t_classify else float("inf")
 
     print("\n=== Throughput ===")
-    print(f"Embedding pre-pass : {computed} new in {t_embed:6.2f}s  -> {embed_rate:7.1f} img/s (GPU)")
-    print(f"Classify pass      : {len(files)} in {t_classify:6.2f}s  -> {classify_rate:7.1f} img/s (cached)")
+    print(
+        f"Embedding pre-pass : {computed} new in {t_embed:6.2f}s  -> {embed_rate:7.1f} img/s (GPU)"
+    )
+    print(
+        f"Classify pass      : {len(files)} in {t_classify:6.2f}s  -> {classify_rate:7.1f} img/s (cached)"
+    )
     print(f"Peak VRAM          : {_peak_vram_gb():.2f} GB")
-    if embed_rate not in (0, float("inf")):
-        eta = 6000 / embed_rate
-        print(f"Projected 6,000-asset cold embed: ~{eta/60:.1f} min")
+    if args.project and embed_rate not in (0, float("inf")):
+        eta = args.project / embed_rate
+        print(f"Projected {args.project:,}-asset cold embed: ~{eta / 60:.1f} min")
 
 
-def _load_labels(csv_path: Path) -> List[Tuple[Path, str, str]]:
+def _load_labels(csv_path: Path) -> list[tuple[Path, str, str]]:
     rows = []
     with open(csv_path, newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
@@ -116,10 +121,14 @@ def run_eval(args) -> None:
     threshold = args.threshold
     margin_threshold = args.margin
 
-    stats: Dict[str, int] = dict(
-        n=0, type_correct=0, cat_correct=0,
-        confident=0, conf_cat_correct=0,
-        uncertain=0, unc_cat_correct=0,
+    stats: dict[str, int] = dict(
+        n=0,
+        type_correct=0,
+        cat_correct=0,
+        confident=0,
+        conf_cat_correct=0,
+        uncertain=0,
+        unc_cat_correct=0,
     )
     for path, gt_type, gt_cat in labels:
         if not path.exists():
@@ -158,12 +167,15 @@ def main() -> None:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-i", "--input", default="assets")
-    common.add_argument("--clip-model", default="siglip2", choices=[m.value for m in ClipModelChoice])
+    common.add_argument(
+        "--clip-model", default="siglip2", choices=[m.value for m in ClipModelChoice]
+    )
     common.add_argument("--batch-size", type=int, default=32)
     common.add_argument("--cpu", action="store_true")
 
     p_tp = sub.add_parser("throughput", parents=[common])
     p_tp.add_argument("--limit", type=int, default=0, help="Cap number of images (0 = all)")
+    p_tp.add_argument("--project", type=int, default=0, help="Project cold-embed time for N assets")
 
     p_ev = sub.add_parser("eval", parents=[common])
     p_ev.add_argument("--labels", required=True, help="CSV: path,asset_type,category")
