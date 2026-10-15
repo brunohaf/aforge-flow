@@ -1,10 +1,12 @@
 """Main asset processing pipeline."""
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, List, Optional
 
 import structlog
+from tqdm import tqdm
+
 from aforge_flow.config import Config
 from aforge_flow.processors import (
     BackgroundRemovalProcessor,
@@ -14,15 +16,14 @@ from aforge_flow.processors import (
     ProcessorResult,
 )
 from aforge_flow.utils import DuplicateDetector, get_files_recursively, validate_file
-from tqdm import tqdm
 
 logger = structlog.get_logger(__name__)
 
 
 def result_event(
     result: ProcessorResult,
-    index: Optional[int] = None,
-    total: Optional[int] = None,
+    index: int | None = None,
+    total: int | None = None,
 ) -> dict:
     """Build a JSON-serializable progress event from a :class:`ProcessorResult`.
 
@@ -55,20 +56,15 @@ class AssetPipeline:
         self.config = config
         self.logger = structlog.get_logger("AssetPipeline")
 
-        # Initialize processors
-        self.background_removal_processor: Optional[BackgroundRemovalProcessor] = None
-        self.media_optimization_processor: Optional[MediaOptimizationProcessor] = None
-        self.caption_rename_processor: Optional[CaptionRenameProcessor] = None
-        self.creature_classification_processor: Optional[
-            CreatureClassificationProcessor
-        ] = None
+        self.background_removal_processor: BackgroundRemovalProcessor | None = None
+        self.media_optimization_processor: MediaOptimizationProcessor | None = None
+        self.caption_rename_processor: CaptionRenameProcessor | None = None
+        self.creature_classification_processor: CreatureClassificationProcessor | None = None
 
-        # Initialize deduplication
         self.duplicate_detector = DuplicateDetector(self.config.cache_dir / "hashes")
 
-        # Results tracking
-        self.processed_files: List[ProcessorResult] = []
-        self.failed_files: List[ProcessorResult] = []
+        self.processed_files: list[ProcessorResult] = []
+        self.failed_files: list[ProcessorResult] = []
 
         self.logger.info(
             "pipeline_initialized",
@@ -91,9 +87,7 @@ class AssetPipeline:
             self.logger.info("caption_rename_processor_initialized")
 
         if getattr(self.config, "classification_enabled", False):
-            self.creature_classification_processor = CreatureClassificationProcessor(
-                self.config
-            )
+            self.creature_classification_processor = CreatureClassificationProcessor(self.config)
             self.logger.info("creature_classification_processor_initialized")
 
         if self.config.media_optimization_enabled:
@@ -121,14 +115,12 @@ class AssetPipeline:
         Returns:
             ProcessorResult from last processor in chain
         """
-        # Validate input
         is_valid, error_msg = validate_file(input_path)
         if not is_valid:
             result = ProcessorResult(input_path, success=False, error=error_msg)
             self.failed_files.append(result)
             return result
 
-        # Check for duplicates
         if self.duplicate_detector.is_duplicate(input_path):
             result = ProcessorResult(
                 input_path,
@@ -138,11 +130,9 @@ class AssetPipeline:
             self.failed_files.append(result)
             return result
 
-        # Process through pipeline
         current_path = input_path
         result = ProcessorResult(input_path, success=True)
 
-        # Step 0: Caption and rename
         if self.caption_rename_processor:
             if self.caption_rename_processor.can_process(current_path):
                 result = self.caption_rename_processor.process(current_path)
@@ -152,11 +142,9 @@ class AssetPipeline:
                 self.failed_files.append(result)
                 return result
 
-            # downstream steps use the renamed file
             if result.output_path:
                 current_path = result.output_path
 
-        # Step 0.5: Creature classification (pass-through; attaches metadata)
         if self.creature_classification_processor:
             if self.creature_classification_processor.can_process(current_path):
                 class_result = self.creature_classification_processor.process(current_path)
@@ -164,7 +152,6 @@ class AssetPipeline:
                 # Carry classification metadata forward; never blocks the chain.
                 result.metadata.update(class_result.metadata)
 
-        # # Step 1: Background removal
         if remove_background and self.background_removal_processor:
             if self.background_removal_processor.can_process(current_path):
                 result = self.background_removal_processor.process(current_path)
@@ -177,7 +164,6 @@ class AssetPipeline:
                 if result.output_path:
                     current_path = result.output_path
 
-        # Step 2: Media optimization
         if optimize_media and self.media_optimization_processor:
             if self.media_optimization_processor.can_process(current_path):
                 result = self.media_optimization_processor.process(current_path)
@@ -187,7 +173,6 @@ class AssetPipeline:
                     self.failed_files.append(result)
                     return result
 
-        # Track successful processing
         self.processed_files.append(result)
         return result
 
@@ -195,7 +180,7 @@ class AssetPipeline:
         self,
         remove_background: bool = True,
         optimize_media: bool = True,
-        progress_callback: Optional[Callable[[dict], None]] = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> None:
         """
         Process all assets in input directory.
@@ -208,7 +193,6 @@ class AssetPipeline:
                 to stream live progress; ``None`` keeps the CLI behaviour
                 unchanged. See :func:`result_event` for the event shape.
         """
-        # Get all files
         files = get_files_recursively(self.config.input_dir, supported_only=True)
 
         if not files:
@@ -234,7 +218,6 @@ class AssetPipeline:
         if progress_callback:
             progress_callback({"type": "start", "total": len(files)})
 
-        # Process files
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             futures = {
                 executor.submit(
@@ -246,7 +229,6 @@ class AssetPipeline:
                 for file_path in files
             }
 
-            # Use tqdm for progress
             with tqdm(
                 total=len(files),
                 desc="Processing assets",
@@ -256,13 +238,13 @@ class AssetPipeline:
                 for future in as_completed(futures):
                     pbar.update(1)
                     done += 1
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        self.logger.exception("asset_crashed", input=str(futures[future]))
+                        result = ProcessorResult(futures[future], success=False, error=str(exc))
+                        self.failed_files.append(result)
                     if progress_callback:
-                        try:
-                            result = future.result()
-                        except Exception as exc:  # pragma: no cover - defensive
-                            result = ProcessorResult(
-                                futures[future], success=False, error=str(exc)
-                            )
                         progress_callback(result_event(result, done, len(files)))
 
         if progress_callback:
@@ -284,9 +266,11 @@ class AssetPipeline:
             "success_rate": f"{(total_processed / total * 100):.1f}%" if total > 0 else "N/A",
             "total_input_size": total_input_size,
             "total_output_size": total_output_size,
-            "total_compression": f"{((1 - total_output_size / total_input_size) * 100):.1f}%"
-            if total_input_size > 0
-            else "N/A",
+            "total_compression": (
+                f"{((1 - total_output_size / total_input_size) * 100):.1f}%"
+                if total_input_size > 0
+                else "N/A"
+            ),
         }
 
     def print_summary(self) -> None:

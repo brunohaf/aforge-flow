@@ -14,15 +14,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional
 
 from aforge_flow.utils.validators import (
     get_files_recursively,
     is_image,
     is_video,
 )
-
-# --- Tuning constants (documented so the heuristics are auditable) -----------
 
 # libvpx-vp9 is already multithreaded (we pass ``-row-mt 1``), so running many
 # workers oversubscribes the CPU. Allot roughly one worker per 4 logical cores.
@@ -46,7 +43,7 @@ GPU_VIDEO_WORKERS_WITH_IMAGES = 2  # overlap CPU image work with GPU encodes
 LOW_VRAM_WARN_GB = 3.0
 
 # Warn about big single files driving long, memory-heavy encodes.
-LARGE_VIDEO_WARN_BYTES = 500 * 1024 * 1024  # 500 MB
+LARGE_VIDEO_WARN_BYTES = 500 * 1024 * 1024
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -60,9 +57,9 @@ class HardwareInfo:
     total_ram_gb: float
     available_ram_gb: float
     has_cuda: bool
-    gpu_name: Optional[str]
-    total_vram_gb: Optional[float]
-    free_vram_gb: Optional[float]
+    gpu_name: str | None
+    total_vram_gb: float | None
+    free_vram_gb: float | None
     has_av1_nvenc: bool
 
 
@@ -78,8 +75,8 @@ class WorkloadInfo:
 class Recommendation:
     use_gpu: bool
     workers: int
-    notes: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def detect_hardware() -> HardwareInfo:
@@ -99,9 +96,9 @@ def detect_hardware() -> HardwareInfo:
     available_ram_gb = vm.available / (1024**3)
 
     has_cuda = False
-    gpu_name: Optional[str] = None
-    total_vram_gb: Optional[float] = None
-    free_vram_gb: Optional[float] = None
+    gpu_name: str | None = None
+    total_vram_gb: float | None = None
+    free_vram_gb: float | None = None
     try:
         import torch
 
@@ -176,14 +173,13 @@ def recommend_settings(
     GPU acceleration today only benefits the WebM path (av1_nvenc); mp4/mkv are
     still CPU libx264, so ``use_gpu`` is reported False (with a note) for them.
     """
-    notes: List[str] = []
-    warnings: List[str] = []
+    notes: list[str] = []
+    warnings: list[str] = []
 
     has_images = workload.num_images > 0
     has_videos = workload.num_videos > 0
     is_webm = video_format == "webm"
 
-    # --- GPU decision -------------------------------------------------------
     if not hw.has_cuda:
         use_gpu = False
         notes.append("No CUDA GPU detected — using CPU encoders.")
@@ -204,19 +200,14 @@ def recommend_settings(
         use_gpu = True
         notes.append(f"GPU AV1 NVENC ({hw.gpu_name}) available for WebM encoding.")
 
-    # --- Worker count -------------------------------------------------------
     if has_videos and use_gpu:
-        # NVENC is a single shared block; extra workers don't add throughput.
         workers = GPU_VIDEO_WORKERS_WITH_IMAGES if has_images else GPU_VIDEO_WORKERS
         notes.append(
             "NVENC is a single hardware block, so video encoding does not scale "
             f"with workers — {workers} keeps it fed without contention."
         )
     elif has_videos:
-        # CPU libvpx-vp9 path: avoid oversubscribing already-multithreaded encodes.
-        workers = _clamp(
-            hw.physical_cores // CPU_CORES_PER_VP9_WORKER, 1, MAX_CPU_VIDEO_WORKERS
-        )
+        workers = _clamp(hw.physical_cores // CPU_CORES_PER_VP9_WORKER, 1, MAX_CPU_VIDEO_WORKERS)
         capped = _ram_capped(workers, hw.available_ram_gb)
         if capped < workers:
             warnings.append(
@@ -230,11 +221,9 @@ def recommend_settings(
             "each beats many contending workers."
         )
     else:
-        # Image-only batch: light Pillow work, can parallelize more.
         workers = _clamp(hw.physical_cores, 1, MAX_IMAGE_WORKERS)
         workers = _ram_capped(workers, hw.available_ram_gb)
 
-    # --- OOM / contention warnings -----------------------------------------
     if full_pipeline and hw.has_cuda and hw.free_vram_gb is not None:
         if hw.free_vram_gb < LOW_VRAM_WARN_GB:
             warnings.append(
@@ -250,9 +239,7 @@ def recommend_settings(
             "peak memory use."
         )
 
-    return Recommendation(
-        use_gpu=use_gpu, workers=workers, notes=notes, warnings=warnings
-    )
+    return Recommendation(use_gpu=use_gpu, workers=workers, notes=notes, warnings=warnings)
 
 
 def build_command_line(
@@ -270,9 +257,7 @@ def build_command_line(
     )
 
 
-def as_dict(
-    hw: HardwareInfo, workload: WorkloadInfo, rec: Recommendation
-) -> dict:
+def as_dict(hw: HardwareInfo, workload: WorkloadInfo, rec: Recommendation) -> dict:
     """Combine all three records into a JSON-serializable dict."""
     return {
         "hardware": asdict(hw),

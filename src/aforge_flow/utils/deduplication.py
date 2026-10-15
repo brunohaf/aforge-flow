@@ -2,7 +2,6 @@
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional
 
 import structlog
 
@@ -12,7 +11,7 @@ logger = structlog.get_logger(__name__)
 class DuplicateDetector:
     """Detects and prevents processing of duplicate files."""
 
-    def __init__(self, hash_cache_dir: Optional[Path] = None):
+    def __init__(self, hash_cache_dir: Path | None = None):
         """
         Initialize duplicate detector.
 
@@ -20,7 +19,7 @@ class DuplicateDetector:
             hash_cache_dir: Optional directory to cache file hashes
         """
         self.hash_cache_dir = hash_cache_dir
-        self.hash_map: Dict[str, Path] = {}
+        self.hash_map: dict[str, Path] = {}
 
         if self.hash_cache_dir:
             self.hash_cache_dir.mkdir(parents=True, exist_ok=True)

@@ -1,19 +1,15 @@
 """Validators for input files and output integrity."""
 
 from pathlib import Path
-from typing import List, Tuple
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Supported image formats
 SUPPORTED_IMAGE_FORMATS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
 
-# Supported video formats
 SUPPORTED_VIDEO_FORMATS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".wmv"}
 
-# All supported formats
 SUPPORTED_FORMATS = SUPPORTED_IMAGE_FORMATS | SUPPORTED_VIDEO_FORMATS
 
 
@@ -57,7 +53,7 @@ def is_video(file_path: Path) -> bool:
     return file_path.suffix.lower() in SUPPORTED_VIDEO_FORMATS
 
 
-def validate_file(file_path: Path) -> Tuple[bool, str]:
+def validate_file(file_path: Path) -> tuple[bool, str]:
     """
     Validate file for processing.
 
@@ -80,7 +76,7 @@ def validate_file(file_path: Path) -> Tuple[bool, str]:
         file_size = file_path.stat().st_size
         if file_size == 0:
             return False, "File is empty"
-        if file_size > 2 * 1024 * 1024 * 1024:  # 2GB limit
+        if file_size > 2 * 1024 * 1024 * 1024:
             return False, "File is too large (>2GB)"
     except OSError as e:
         return False, f"Cannot access file: {e}"
@@ -91,7 +87,7 @@ def validate_file(file_path: Path) -> Tuple[bool, str]:
 def get_files_recursively(
     directory: Path,
     supported_only: bool = True,
-) -> List[Path]:
+) -> list[Path]:
     """
     Get all files recursively from directory.
 
@@ -108,7 +104,6 @@ def get_files_recursively(
         if not file_path.is_file():
             continue
 
-        # Skip temporary and cache files
         if file_path.name.startswith(".") or file_path.suffix in {".tmp", ".bak"}:
             continue
 

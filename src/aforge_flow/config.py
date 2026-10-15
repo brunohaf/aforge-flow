@@ -2,7 +2,6 @@
 
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,6 +14,7 @@ class AssetCategory(str, Enum):
     PORTRAIT = "portrait"
     TOKEN = "token"
     GENERAL = "general"
+
 
 class ClipModelChoice(str, Enum):
     """CLIP-family encoder used by the creature classifier.
@@ -110,16 +110,15 @@ class RembgModel(str, Enum):
     # Prompt-guided interactive segmentation. Best for assisted workflows.
     SAM = "sam"
 
+
 class MediaFormat(str, Enum):
     """Supported media formats."""
 
-    # Images
     PNG = "png"
     JPEG = "jpeg"
     JPG = "jpg"
     WEBP = "webp"
 
-    # Videos
     MP4 = "mp4"
     MKV = "mkv"
     WEBM = "webm"
@@ -147,12 +146,10 @@ class CompressionLevel(int, Enum):
 class Config(BaseModel):
     """Main configuration for asset optimizer."""
 
-    # Paths
     input_dir: Path = Field(default=Path("assets"), description="Input assets directory")
     output_dir: Path = Field(default=Path("output"), description="Output assets directory")
     cache_dir: Path = Field(default=Path(".cache"), description="Cache directory for models")
 
-    # GPU settings
     use_gpu: bool = Field(default=True, description="Use GPU acceleration")
     gpu_device: str = Field(default="cuda", description="GPU device identifier")
     batch_size: int = Field(default=1, description="Batch size for processing")
@@ -218,7 +215,6 @@ class Config(BaseModel):
         description="Maximum number of words kept in a generated caption slug.",
     )
 
-    # Creature classification settings (zero-shot CLIP-family)
     classification_enabled: bool = Field(
         default=False, description="Enable D&D creature classification"
     )
@@ -262,14 +258,14 @@ class Config(BaseModel):
         description="HuggingFace id of the VLM fallback model",
     )
 
-    # Background removal settings
     rembg_enabled: bool = Field(default=True, description="Enable background removal")
-    rembg_model: RembgModel = Field(default=RembgModel.BRIA_RMBG, description="Model for rembg")
+    rembg_model: RembgModel | None = Field(
+        default=None, description="Explicit rembg model; None routes by rembg_category"
+    )
     rembg_category: AssetCategory = Field(
         default=AssetCategory.GENERAL, description="Asset category for model selection"
     )
 
-    # GPU memory / robustness for background removal
     cpu_fallback_on_oom: bool = Field(
         default=True,
         description="When the GPU runs out of VRAM (even after recreating the session), "
@@ -281,7 +277,6 @@ class Config(BaseModel):
         "(recommended). Set e.g. 6 to leave headroom on an 8 GB laptop GPU.",
     )
 
-    # Media optimization settings
     media_optimization_enabled: bool = Field(default=True, description="Enable media optimization")
     # Output formats are split by media class: image inputs are transcoded to
     # ``image_format`` and video inputs to ``video_format``. A single format
@@ -296,19 +291,19 @@ class Config(BaseModel):
         default=CompressionLevel.BALANCED, description="Compression level"
     )
 
-    # Processing settings
     recursive: bool = Field(default=True, description="Process directories recursively")
     skip_existing: bool = Field(default=True, description="Skip already processed files")
     verify_integrity: bool = Field(default=True, description="Verify output integrity")
     max_workers: int = Field(default=1, description="Maximum parallel workers")
 
-    # Alpha and Edges
-    #
     # Modern models (BiRefNet/BRIA) already produce a clean mask, so the heavy
     # refinement is OFF by default — it was the main source of the "smudged"
     # look. Prefer ``alpha_edge_sharpening`` for crisp edges; only enable
     # ``alpha_matting`` for hair-heavy portraits with weaker models.
-    alpha_matting: bool = Field(default=False, description="Use pymatting to refine hair/fur edges. Slower; can soften edges on strong models.")
+    alpha_matting: bool = Field(
+        default=False,
+        description="Use pymatting to refine hair/fur edges. Slower; can soften edges on strong models.",
+    )
     alpha_edge_sharpening: float = Field(
         default=0.5,
         ge=0.0,
@@ -318,11 +313,16 @@ class Config(BaseModel):
         "fully opaque and removes the semi-transparent halo while keeping a thin anti-aliased "
         "edge; 1.0 is the hardest (near-binary) edge.",
     )
-    edge_decontamination_radius: int = Field(default=0, description="Neighbourhood radius for RGB fringe decontamination. 0 disables the (slow, per-pixel) pass.")
-    erode_alpha: bool = Field(default=False, description="Trim one pixel from the alpha boundary. thins fine details for when decontamination alone is insufficient.")
+    edge_decontamination_radius: int = Field(
+        default=0,
+        description="Neighbourhood radius for RGB fringe decontamination. 0 disables the (slow, per-pixel) pass.",
+    )
+    erode_alpha: bool = Field(
+        default=False,
+        description="Trim one pixel from the alpha boundary. thins fine details for when decontamination alone is insufficient.",
+    )
 
-    # Output format
-    output_suffix: Optional[str] = Field(
+    output_suffix: str | None = Field(
         default="_optimized", description="Suffix for optimized files"
     )
     preserve_directory_structure: bool = Field(
@@ -368,7 +368,6 @@ class Config(BaseModel):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
 
-# Model selection mapping based on asset category.
 # BRIA RMBG-2.0 is the SOTA default for general subjects (creatures, humanoids,
 # tokens); BiRefNet-DIS isolates single objects best (items); BiRefNet-Portrait
 # wins on faces/hair.
@@ -381,3 +380,20 @@ MODEL_BY_CATEGORY = {
     AssetCategory.TOKEN: RembgModel.BRIA_RMBG,
     AssetCategory.GENERAL: RembgModel.BRIA_RMBG,
 }
+
+# Commits verified on 2026-10-15; pinning keeps downloads reproducible and stops a
+# re-pushed ``main`` from swapping weights. Bump deliberately, together with a test run.
+HF_REVISIONS: dict[str, str] = {
+    "Salesforce/blip-image-captioning-base": "82a37760796d32b1411fe092ab5d4e227313294b",
+    "Qwen/Qwen2.5-VL-3B-Instruct": "66285546d2b821cf421d4f5eb2576359d3770cd3",
+    "Qwen/Qwen2.5-VL-7B-Instruct": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+    "google/siglip2-so400m-patch14-384": "e8e487298228002f3d8a82e0cd5c8ea9c567f57f",
+    "google/siglip-so400m-patch14-384": "9fdffc58afc957d1a03a25b10dba0329ab15c2a3",
+    "openai/clip-vit-large-patch14": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+    "facebook/metaclip-2-worldwide-huge-quickgelu": "c139061af7b10fdb2e754b60d2b1182a3d5526c2",
+}
+
+
+def hf_revision(hf_id: str) -> str:
+    """Pinned commit for a bundled model id; ids the user supplies track ``main``."""
+    return HF_REVISIONS.get(hf_id, "main")

@@ -2,9 +2,10 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import structlog
+
 from aforge_flow.config import Config
 
 logger = structlog.get_logger(__name__)
@@ -16,10 +17,10 @@ class ProcessorResult:
     def __init__(
         self,
         input_path: Path,
-        output_path: Optional[Path] = None,
+        output_path: Path | None = None,
         success: bool = False,
-        error: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         """
         Initialize processor result.
@@ -85,7 +86,22 @@ class BaseProcessor(ABC):
         """
         pass
 
-    def get_output_path(self, input_path: Path, suffix: Optional[str] = None) -> Path:
+    def relative_to_roots(self, path: Path) -> Path:
+        """Return *path* relative to the most specific of the input/output dirs.
+
+        Files produced by an earlier step live under the output dir, which may be
+        nested inside the input dir (``-i . -o output``), so the deepest match wins.
+        """
+        roots = [
+            root
+            for root in (self.config.input_dir, self.config.output_dir)
+            if path.is_relative_to(root)
+        ]
+        if not roots:
+            return Path(path.name)
+        return path.relative_to(max(roots, key=lambda r: len(r.parts)))
+
+    def get_output_path(self, input_path: Path, suffix: str | None = None) -> Path:
         """
         Get output path for input file.
 
@@ -97,15 +113,12 @@ class BaseProcessor(ABC):
             Output file path
         """
         if self.config.preserve_directory_structure:
-            # Preserve directory structure
-            rel_path = input_path.relative_to(self.config.input_dir)
-            output_dir = self.config.output_dir / rel_path.parent
+            output_dir = self.config.output_dir / self.relative_to_roots(input_path).parent
         else:
             output_dir = self.config.output_dir
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create output filename
         if suffix is None:
             suffix = self.config.output_suffix or ""
 

@@ -1,0 +1,71 @@
+name: reviewdog
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  ruff:
+    name: runner / ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.11"
+      - uses: reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1
+      - env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORTER: ${{ github.event_name == 'pull_request' && 'github-pr-review' || 'github-check' }}
+        run: |
+          ruff_version=$(uv export --frozen --extra dev --no-hashes | sed -n 's/^ruff==\([^ ;]*\).*/\1/p')
+          uvx "ruff@${ruff_version}" check --output-format rdjson src tests scripts benchmarks \
+            | reviewdog -f=rdjson -name=ruff -reporter="$REPORTER" -level=warning -fail-level=any
+
+  black:
+    name: runner / black (suggestions)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.11"
+      - run: |
+          black_version=$(uv export --frozen --extra dev --no-hashes | sed -n 's/^black==\([^ ;]*\).*/\1/p')
+          uvx "black@${black_version}" src tests scripts benchmarks
+      - uses: reviewdog/action-suggester@ac5ce6d94e35c00530447dc63c271e38e4fd36c6 # v1
+        with:
+          tool_name: black
+          fail_level: any
+
+  actionlint:
+    name: runner / actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: reviewdog/action-actionlint@3cbf14efd750961dba35fccbf00f9e14028cb1f5 # v1
+        with:
+          reporter: github-check
+          level: warning
+          fail_level: warning
+
+  misspell:
+    name: runner / misspell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: reviewdog/action-misspell@ce198e1db0d029be165f2d3e809c1a42353446b0 # v1
+        with:
+          reporter: github-check
+          level: warning
+          locale: "US"
+          exclude: |
+            ./web/package-lock.json
+            ./uv.lock

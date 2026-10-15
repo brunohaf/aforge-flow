@@ -1,4 +1,4 @@
-"""Command-line interface for AForge Flow (``aforge``)."""
+"""Command-line interface for aforge-flow (``aforge``)."""
 
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from aforge_flow.config import (
     RembgModel,
 )
 from aforge_flow.pipeline import AssetPipeline
+from aforge_flow.profiles import PROFILES, apply_profile, profile_help
 from aforge_flow.utils import (
     as_dict,
     build_command_line,
@@ -49,6 +50,7 @@ def _apply_auto_tune(
     )
     return rec.use_gpu, rec.workers
 
+
 # Make ``-h`` an alias for ``--help`` everywhere. Click propagates a parent
 # context's ``help_option_names`` to every subcommand, so setting it once on
 # the group covers ``aforge -h`` and ``aforge <command> -h`` alike.
@@ -58,16 +60,17 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(__version__, "-V", "--version", prog_name="aforge")
 def main() -> None:
-    """aforge — AForge Flow: GPU-accelerated tabletop asset pipeline.
+    """aforge-flow: GPU-accelerated artwork pipeline.
 
-    Batch-prepare RPG/VTT artwork: strip backgrounds, transcode images and
-    video to web-friendly formats, and classify creatures into a D&D taxonomy.
+    Category-aware background removal, lossless or lossy optimization,
+    meaningful file names and zero-shot classification.
+    Flagship profile: --profile tabletop for RPG / VTT libraries.
 
     \b
     Commands:
       process              Run the full pipeline (background removal + media
-                           optimization; --caption-rename and --classify opt-in).
-                           Aliases: go, pipe
+                           optimization; --caption-rename and --classify opt-in,
+                           or both via --profile tabletop). Aliases: go, pipe
       remove-background    Strip image backgrounds with rembg
       optimize             Transcode images/video to optimized formats
                            (alias: optimize-media)
@@ -76,11 +79,12 @@ def main() -> None:
       classify             Tag images with a D&D creature taxonomy (CLIP/VLM)
       recommend            Suggest --workers/--gpu for this machine + workload
       info                 Show version, PyTorch, and CUDA/GPU details
+      web                  Local web UI (work in progress)
 
     \b
     Examples:
       aforge recommend -i assets --video-format webm
-      aforge go -i assets -o output --auto-tune --caption-rename --classify
+      aforge go -i assets -o output --auto-tune --profile tabletop
       aforge optimize -i assets -o output --image-format webp --video-format webm
       aforge rename -i assets -o output
       aforge classify -i assets --clip-model siglip2 --vlm-fallback
@@ -91,6 +95,14 @@ def main() -> None:
 
 
 @main.command()
+@click.option(
+    "--profile",
+    type=click.Choice(list(PROFILES)),
+    default="default",
+    is_eager=True,
+    callback=apply_profile,
+    help=profile_help(),
+)
 @click.option(
     "--input",
     "-i",
@@ -124,8 +136,8 @@ def main() -> None:
 @click.option(
     "--model",
     type=click.Choice([m.value for m in RembgModel]),
-    default=RembgModel.BRIA_RMBG.value,
-    help="Background removal model (default selected per --category)",
+    default=None,
+    help="Override the background removal model (default: chosen by --category)",
 )
 @click.option(
     "--image-format",
@@ -213,12 +225,13 @@ def main() -> None:
     help="Logging level",
 )
 def process(
+    profile: str,
     input: str,
     output: str,
     background_removal: bool,
     media_optimization: bool,
     category: str,
-    model: str,
+    model: str | None,
     image_format: str,
     video_format: str,
     compression: str,
@@ -234,28 +247,27 @@ def process(
     skip_existing: bool,
     log_level: str,
 ) -> None:
-    """Process assets with background removal and media optimization."""
-    # Configure logging
+    """Background removal, then media optimization (aliases: go, pipe)."""
     configure_logging(level=log_level)
 
     logger.info(
         "starting_aforge",
         input=input,
         output=output,
+        profile=profile,
         version=__version__,
     )
 
     if auto_tune:
         gpu, workers = _apply_auto_tune(input, video_format, full_pipeline=True)
 
-    # Create config
     config = Config(
         input_dir=Path(input),
         output_dir=Path(output),
         rembg_enabled=background_removal,
         media_optimization_enabled=media_optimization,
         rembg_category=AssetCategory(category),
-        rembg_model=RembgModel(model),
+        rembg_model=RembgModel(model) if model else None,
         image_format=MediaFormat(image_format),
         video_format=MediaFormat(video_format),
         compression_level=CompressionLevel[compression.upper()],
@@ -270,7 +282,6 @@ def process(
         skip_existing=skip_existing,
     )
 
-    # Create and run pipeline
     pipeline = AssetPipeline(config)
     pipeline.setup()
 
@@ -311,8 +322,8 @@ def process(
 @click.option(
     "--model",
     type=click.Choice([m.value for m in RembgModel]),
-    default=RembgModel.BRIA_RMBG.value,
-    help="Background removal model (default selected per --category)",
+    default=None,
+    help="Override the background removal model (default: chosen by --category)",
 )
 @click.option(
     "--gpu/--cpu",
@@ -340,14 +351,13 @@ def remove_background(
     input: str,
     output: str,
     category: str,
-    model: str,
+    model: str | None,
     gpu: bool,
     workers: int,
     skip_existing: bool,
     log_level: str,
 ) -> None:
-    """Remove backgrounds from images using rembg."""
-    # Configure logging
+    """Strip image backgrounds; model chosen by --category."""
     configure_logging(level=log_level)
 
     logger.info(
@@ -358,20 +368,18 @@ def remove_background(
         model=model,
     )
 
-    # Create config
     config = Config(
         input_dir=Path(input),
         output_dir=Path(output),
         rembg_enabled=True,
         media_optimization_enabled=False,
         rembg_category=AssetCategory(category),
-        rembg_model=RembgModel(model),
+        rembg_model=RembgModel(model) if model else None,
         use_gpu=gpu,
         max_workers=workers,
         skip_existing=skip_existing,
     )
 
-    # Create and run pipeline
     pipeline = AssetPipeline(config)
     pipeline.setup()
 
@@ -459,8 +467,7 @@ def optimize_media(
     skip_existing: bool,
     log_level: str,
 ) -> None:
-    """Optimize and transcode media files to WebM/WebP."""
-    # Configure logging
+    """Transcode images/video to web formats (alias: optimize-media)."""
     configure_logging(level=log_level)
 
     logger.info(
@@ -474,7 +481,6 @@ def optimize_media(
     if auto_tune:
         gpu, workers = _apply_auto_tune(input, video_format, full_pipeline=False)
 
-    # Create config
     config = Config(
         input_dir=Path(input),
         output_dir=Path(output),
@@ -488,7 +494,6 @@ def optimize_media(
         skip_existing=skip_existing,
     )
 
-    # Create and run pipeline
     pipeline = AssetPipeline(config)
     pipeline.setup()
 
@@ -575,7 +580,7 @@ def classify(
     workers: int,
     log_level: str,
 ) -> None:
-    """Classify images into D&D creature taxonomy from image content alone."""
+    """Tag images with the D&D creature taxonomy."""
     configure_logging(level=log_level)
 
     logger.info(
@@ -705,7 +710,7 @@ def caption_rename(
     skip_existing: bool,
     log_level: str,
 ) -> None:
-    """Rename images from AI-generated captions (replicas share a slug)."""
+    """Give images meaningful names (alias: rename)."""
     configure_logging(level=log_level)
 
     logger.info(
@@ -781,7 +786,7 @@ def recommend(
     full_pipeline: bool,
     as_json: bool,
 ) -> None:
-    """Recommend --workers and --gpu/--cpu for this machine and input."""
+    """Suggest --workers and --gpu/--cpu for this machine."""
     import json as _json
 
     hw = detect_hardware()
@@ -807,7 +812,9 @@ def recommend(
     click.echo("=" * 60)
     click.echo("Hardware:")
     click.echo(f"  CPU cores:      {hw.physical_cores} physical / {hw.logical_cores} logical")
-    click.echo(f"  RAM:            {hw.available_ram_gb:.1f} GB free / {hw.total_ram_gb:.1f} GB total")
+    click.echo(
+        f"  RAM:            {hw.available_ram_gb:.1f} GB free / {hw.total_ram_gb:.1f} GB total"
+    )
     click.echo(f"  GPU (CUDA):     {gpu_str}" + (f"  ({hw.gpu_name})" if hw.gpu_name else ""))
     click.echo(f"  VRAM:           {vram}")
     click.echo(f"  av1_nvenc:      {'Yes' if hw.has_av1_nvenc else 'No'}")
@@ -836,18 +843,20 @@ def recommend(
 
 @main.command()
 def info() -> None:
-    """Display system and configuration information."""
+    """Show version, PyTorch and CUDA details."""
     import torch
 
     click.echo("\n" + "=" * 60)
-    click.echo("AAFORGE FLOW (aforge) - SYSTEM INFORMATION")
+    click.echo("AFORGE-FLOW (aforge) - SYSTEM INFORMATION")
     click.echo("=" * 60)
     click.echo(f"Version:          {__version__}")
     click.echo(f"PyTorch:          {torch.__version__}")
     click.echo(f"CUDA available:   {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         click.echo(f"CUDA device:      {torch.cuda.get_device_name(0)}")
-        click.echo(f"GPU memory:       {torch.cuda.get_device_properties(0).total_memory / (1024**3):.1f} GB")
+        click.echo(
+            f"GPU memory:       {torch.cuda.get_device_properties(0).total_memory / (1024**3):.1f} GB"
+        )
     click.echo("=" * 60 + "\n")
 
 
@@ -867,33 +876,30 @@ def info() -> None:
     help="Logging level",
 )
 def web(host: str, port: int, root: str, log_level: str) -> None:
-    """Launch the local web UI (FastAPI) for the pipeline.
+    """Local web UI for the pipeline (work in progress).
 
     Open http://HOST:PORT in a browser to browse/upload assets, set options
     visually, run the pipeline, watch live progress and download results.
 
     \b
-    Requires the optional extra:  pip install -e ".[web]"
+    Requires the optional extra:  uv sync --extra web
     """
     configure_logging(level=log_level)
     try:
         import uvicorn
     except ImportError:
         raise click.ClickException(
-            'The web UI needs extra deps. Install them with:  pip install -e ".[web]"'
-        )
+            "The web UI needs extra deps. Install them with:  uv sync --extra web"
+        ) from None
 
     from aforge_flow.web import create_app
 
     root_path = Path(root).resolve()
     logger.info("starting_web_ui", host=host, port=port, root=str(root_path))
-    app = create_app(root_path)
+    app = create_app(root_path, host=host)
     uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
 
 
-# Command aliases — register existing commands under additional names so the
-# common verbs all work (``go``/``pipe`` run the full ``process`` pipeline,
-# ``optimize-media`` stays valid, ``rename`` maps to ``caption-rename``).
 main.add_command(process, name="go")
 main.add_command(process, name="pipe")
 main.add_command(optimize_media, name="optimize-media")

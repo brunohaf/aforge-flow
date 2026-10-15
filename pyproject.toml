@@ -1,18 +1,18 @@
 [build-system]
-requires = ["setuptools>=65.0", "wheel"]
+requires = ["setuptools>=65.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aforge_flow"
-version = "0.1.0"
-description = "GPU-accelerated tabletop/VTT asset pipeline for batch background removal, image cleaning, media transcoding, and creature classification"
+dynamic = ["version"]
+description = "GPU-accelerated artwork pipeline: category-aware background removal, optimization, naming and zero-shot classification"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "AForge Flow Contributors"}
+    {name = "Bruno Fonseca"}
 ]
-keywords = ["background-removal", "rembg", "video-optimization", "image-processing", "gpu", "cuda"]
+keywords = ["background-removal", "rembg", "birefnet", "image-optimization", "webp", "image-processing", "zero-shot-classification", "siglip", "clip", "gpu", "cuda", "tabletop", "ttrpg", "dnd", "vtt", "game-assets"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -20,14 +20,16 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Environment :: GPU :: NVIDIA CUDA",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 dependencies = [
-    "rembg[gpu]>=0.0.52",
+    # 2.0.76 is the version RembgModel names are validated against (config.py).
+    "rembg[gpu]>=2.0.76",
     "opencv-python>=4.8.0",
     "pillow>=10.0.0",
     "numpy>=1.24.0",
@@ -39,6 +41,9 @@ dependencies = [
     "tqdm>=4.65.0",
     "structlog>=23.1.0",
     "psutil>=5.9",
+    # Lazily imported by background_removal.py (edge refinement / alpha matting).
+    "scipy>=1.10",
+    "pymatting>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -46,33 +51,53 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "black>=23.7.0",
-    "ruff>=0.0.280",
+    "ruff>=0.15",
     "mypy>=1.4.0",
     "pytest-asyncio>=0.21.0",
+    "httpx2>=2.13",  # starlette.testclient backend (web API tests)
 ]
 video = [
-    "ffmpeg-python>=0.2.1",
+    "ffmpeg-python>=0.2.0",
     "av>=10.0.0",
 ]
 web = [
-    # Local browser UI for the pipeline (``aforge web``).
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.9",  # required for file uploads
 ]
 classify = [
-    # Zero-shot CLIP-family classification + optional VLM fallback.
-    # Lower bound: 4.49 first ships the Qwen2.5-VL (`qwen2_5_vl`) architecture.
-    # Upper bound: 5.x is a major rewrite (e.g. `torch_dtype`->`dtype`) not yet
-    # validated against the BLIP/SigLIP/CLIP paths here.
-    "transformers>=4.49.0,<5",
+    # >=5.10 clears PYSEC-2026-2288/2289/3929 (RCE, path traversal); 5.x renamed
+    # `torch_dtype` to `dtype`. <6 until the next major is validated with `make tests-gpu`.
+    "transformers>=5.10,<6",
     "accelerate>=0.30.0",
     # Optional: 4-bit VLM fallback on CUDA. Safe to omit (falls back to fp16).
     "bitsandbytes>=0.43.0; platform_system == 'Linux'",
 ]
 
+[project.urls]
+Homepage = "https://github.com/brunohaf/aforge-flow"
+Source = "https://github.com/brunohaf/aforge-flow"
+Issues = "https://github.com/brunohaf/aforge-flow/issues"
+Changelog = "https://github.com/brunohaf/aforge-flow/blob/main/CHANGELOG.md"
+
 [project.scripts]
 aforge = "aforge_flow.cli:main"
+
+# uv: install CUDA builds of PyTorch on Windows/Linux (PyPI ships CPU-only
+# torch wheels for Windows). cu126 is used for the widest NVIDIA driver support.
+# macOS falls through to the default PyPI wheels. Applies to `uv sync`/`uv lock`.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+# Version comes from the latest vX.Y.Z git tag (created by the release workflow).
+[tool.setuptools_scm]
+fallback_version = "0.1.0"
 
 [tool.setuptools]
 packages = ["aforge_flow", "aforge_flow.processors", "aforge_flow.utils", "aforge_flow.web", "aforge_flow.web.routes"]
@@ -83,11 +108,10 @@ aforge_flow = ["creature_names.json"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312"]
+target-version = ["py311", "py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
-  # directories
   \.eggs
   | \.git
   | \.hg
@@ -101,15 +125,46 @@ extend-exclude = '''
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 exclude = [".git", "__pycache__", "dist", "build"]
 
+# Explicit selection so results do not drift with ruff's evolving defaults.
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # line length is black's job
+    "UP042",  # StrEnum changes str() of the public enums
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aforge_flow"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "web/node_modules", "build", "dist"]
+
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["aforge_flow"]
+branch = false
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+# Adapters that load real model weights; exercised by the `gpu`-marked tests instead.
+exclude_also = [
+    "class _BlipBackend",
+    "class _QwenBackend",
+    "class ClipEncoder",
+    "class QwenVLClassifier",
+    "if __name__ == .__main__.:",
+]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

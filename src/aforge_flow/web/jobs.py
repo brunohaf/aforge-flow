@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
 
 import structlog
 
@@ -26,10 +26,10 @@ logger = structlog.get_logger("aforge.web.jobs")
 class Job:
     id: str
     status: str = "running"  # running | completed | error
-    events: List[dict] = field(default_factory=list)  # ordered event log
-    outputs: List[str] = field(default_factory=list)  # successful output paths
-    summary: Optional[dict] = None
-    error: Optional[str] = None
+    events: list[dict] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
+    summary: dict | None = None
+    error: str | None = None
     finished: bool = False
     _cond: threading.Condition = field(default_factory=threading.Condition)
 
@@ -68,10 +68,10 @@ class JobManager:
     """Owns running/finished jobs for the lifetime of the server process."""
 
     def __init__(self) -> None:
-        self._jobs: Dict[str, Job] = {}
+        self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def get(self, job_id: str) -> Optional[Job]:
+    def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
     def start(self, built: BuiltJob) -> str:
@@ -80,8 +80,6 @@ class JobManager:
             self._jobs[job.id] = job
         threading.Thread(target=self._run, args=(job, built), daemon=True).start()
         return job.id
-
-    # -- internal ---------------------------------------------------------
 
     def _run(self, job: Job, built: BuiltJob) -> None:
         try:
@@ -108,7 +106,7 @@ class JobManager:
         finally:
             job.finish()
 
-    def _run_files(self, job: Job, pipeline: AssetPipeline, files: List[Path]) -> None:
+    def _run_files(self, job: Job, pipeline: AssetPipeline, files: list[Path]) -> None:
         """Single-file mode: run each selected/uploaded file individually."""
         total = len(files)
         job.append({"type": "start", "total": total})
