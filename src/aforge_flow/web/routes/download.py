@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from aforge_flow.web.security import safe_resolve
+from aforge_flow.web.security import require_media, safe_resolve
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ router = APIRouter()
 def download_file(request: Request, path: str) -> FileResponse:
     """Download a single (sandboxed) file as an attachment."""
     root: Path = request.app.state.root
-    target = safe_resolve(root, path)
+    target = require_media(safe_resolve(root, path))
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(target, filename=target.name)

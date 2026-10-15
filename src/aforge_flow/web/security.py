@@ -11,6 +11,15 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from aforge_flow.utils import is_supported_format
+
+
+def require_media(path: Path) -> Path:
+    """Refuse anything that is not a supported image/video (e.g. ``.env``, keys, ``.git``)."""
+    if not is_supported_format(path):
+        raise HTTPException(status_code=403, detail="Only supported media files can be served")
+    return path
+
 
 def safe_resolve(root: Path, user_path: str | None) -> Path:
     """Resolve ``user_path`` against ``root`` and ensure it stays inside it.

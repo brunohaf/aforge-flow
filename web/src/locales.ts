@@ -7,7 +7,7 @@ type Dict = Record<string, string>;
 
 export const STRINGS: Record<Locale, Dict> = {
   "pt-BR": {
-    title: "AForge Flow",
+    title: "aforge-flow",
     subtitle: "Pipeline de assets para VTT",
     source: "Origem",
     browse: "Navegar pasta",
@@ -47,7 +47,7 @@ export const STRINGS: Record<Locale, Dict> = {
     error: "Erro",
   },
   "en-US": {
-    title: "AForge Flow",
+    title: "aforge-flow",
     subtitle: "VTT asset pipeline",
     source: "Source",
     browse: "Browse folder",

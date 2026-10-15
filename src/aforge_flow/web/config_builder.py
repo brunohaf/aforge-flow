@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import HTTPException
 
@@ -28,7 +27,7 @@ class BuiltJob:
     config: Config
     # ``None`` => run ``process_directory`` over ``config.input_dir``.
     # Otherwise => the explicit list of files to run through ``process_asset``.
-    files: Optional[List[Path]]
+    files: list[Path] | None
 
 
 def build_job(req: JobRequest, root: Path) -> BuiltJob:
@@ -43,7 +42,7 @@ def build_job(req: JobRequest, root: Path) -> BuiltJob:
     resolved = [safe_resolve(root, t) for t in req.targets]
     output_dir = safe_resolve(root, req.output_dir)
 
-    files: Optional[List[Path]]
+    files: list[Path] | None
     if req.mode == "directory":
         if len(resolved) != 1 or not resolved[0].is_dir():
             raise HTTPException(status_code=400, detail="Directory mode needs exactly one folder")
@@ -66,7 +65,9 @@ def build_job(req: JobRequest, root: Path) -> BuiltJob:
     try:
         compression = CompressionLevel[req.compression.upper()]
     except KeyError:
-        raise HTTPException(status_code=400, detail=f"Invalid compression: {req.compression}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid compression: {req.compression}"
+        ) from None
 
     config = Config(
         input_dir=input_dir,
@@ -92,4 +93,4 @@ def _enum(enum_cls, value, field):
     try:
         return enum_cls(value)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}: {value}")
+        raise HTTPException(status_code=400, detail=f"Invalid {field}: {value}") from None

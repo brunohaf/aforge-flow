@@ -25,11 +25,9 @@ def browse(request: Request, path: str = "") -> dict:
 
     entries = []
     try:
-        children = sorted(
-            target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())
-        )
+        children = sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied") from None
 
     for child in children:
         if child.name.startswith("."):
