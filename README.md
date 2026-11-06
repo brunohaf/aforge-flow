@@ -104,10 +104,10 @@ It installs PyPI's torch, which is CPU-only on Windows.
 
 ## Quick start
 
-Put your files in `assets/` (the default input). Results go to `output/`.
+Put your images and videos in `assets/inputs/` (the default input). Results go to `assets/outputs/`.
 
 ```bash
-make dirs                                  # creates assets/ and output/
+make dirs                                  # creates assets/inputs/ and assets/outputs/
 make optimize-lossless                     # pixel-exact PNG recompression, keeps transparency
 make remove-bg CATEGORY=item               # transparent PNGs using the item model
 make process                               # background removal + WebP
@@ -117,13 +117,13 @@ make tabletop                              # + creature classification + meaning
 The same commands without make:
 
 ```bash
-aforge optimize -i assets -o output --image-format png --compression lossless
-aforge remove-background -i assets -o output --category item
-aforge process -i assets -o output --image-format webp
-aforge process -i assets -o output --profile tabletop
-aforge rename -i assets -o output            # meaningful names only
-aforge classify -i assets --vlm-fallback     # writes <image>.classification.json
-aforge recommend -i assets                   # suggested --workers / --gpu for this machine
+aforge optimize -i assets/inputs -o assets/outputs --image-format png --compression lossless
+aforge remove-background -i assets/inputs -o assets/outputs --category item
+aforge process -i assets/inputs -o assets/outputs --image-format webp
+aforge process -i assets/inputs -o assets/outputs --profile tabletop
+aforge rename -i assets/inputs -o assets/outputs              # meaningful names only
+aforge classify -i assets/inputs --vlm-fallback                # writes <image>.classification.json
+aforge recommend -i assets/inputs                              # suggested --workers / --gpu for this machine
 ```
 
 Run `aforge -h` or `aforge <command> -h` to see every option. `go` and `pipe` are aliases
@@ -133,9 +133,9 @@ for `process`, `optimize-media` for `optimize`, and `rename` for `caption-rename
 
 | Step                | Output                                                         |
 | ------------------- | -------------------------------------------------------------- |
-| `optimize`          | `output/<subdir>/<name>_optimized.<ext>`                       |
-| `remove-background` | `output/<subdir>/<name>_nobg.png`                              |
-| `caption-rename`    | `output/<subdir>/<slug>-<n>.<ext>` (e.g. `balhannoth-1.png`)   |
+| `optimize`          | `assets/outputs/<subdir>/<name>_optimized.<ext>`               |
+| `remove-background` | `assets/outputs/<subdir>/<name>_nobg.png`                      |
+| `caption-rename`    | `assets/outputs/<subdir>/<slug>-<n>.<ext>` (e.g. `balhannoth-1.png`) |
 | `classify`          | `<input>.classification.json` sidecar, next to the input image |
 
 ### Compression levels
@@ -178,7 +178,7 @@ the command line, for example `make process IN=art OUT=web IMAGE_FORMAT=png DEVI
 
 | Variable                        | Default             | Meaning                                              |
 | ------------------------------- | ------------------- | ---------------------------------------------------- |
-| `IN` / `OUT`                    | `assets` / `output` | Input and output folders                             |
+| `IN` / `OUT`                    | `assets/inputs` / `assets/outputs` | Input and output folders                             |
 | `IMAGE_FORMAT` / `VIDEO_FORMAT` | `webp` / `webm`     | Target formats                                       |
 | `COMPRESSION`                   | `balanced`          | `lossless`, `high_quality`, `balanced`, `aggressive` |
 | `CATEGORY`                      | `general`           | Model routing, see below                             |
@@ -248,14 +248,14 @@ beats the runner-up by a clear margin (top-1 minus top-2). Otherwise, `--vlm-fal
 sends that image to Qwen2.5-VL (`source: "vlm"`).
 
 A batched pre-pass embeds every image once into
-`.cache/clip_embeddings.sqlite`. Benchmark with `make benchmark IN=assets` or
+`.cache/clip_embeddings.sqlite`. Benchmark with `make benchmark IN=assets/inputs` or
 `python benchmarks/benchmark_classifier.py eval --labels val.csv --threshold 0.85`.
 
 ## Hardware-aware tuning
 
 ```bash
-aforge recommend -i assets --video-format webm   # inspect + suggest (add --json, --full-pipeline)
-aforge optimize -i assets -o output --auto-tune  # apply the suggestion automatically
+aforge recommend -i assets/inputs --video-format webm            # inspect + suggest (add --json, --full-pipeline)
+aforge optimize -i assets/inputs -o assets/outputs --auto-tune   # apply the suggestion automatically
 ```
 
 What the recommender takes into account:
