@@ -1,5 +1,6 @@
 """Media optimization processor for video and image transcoding."""
 
+import shutil
 import subprocess
 from functools import cache
 from pathlib import Path
@@ -133,27 +134,65 @@ class MediaOptimizationProcessor(BaseProcessor):
                 error="Unsupported media type",
             )
 
+    @staticmethod
+    def _existing_output(input_path: Path, output_path: Path) -> Path | None:
+        """Return a non-empty earlier output: the encode, or the original kept in its place.
+
+        The size check makes previously-failed 0-byte outputs re-encode instead of skip.
+        """
+        for candidate in (output_path, output_path.with_suffix(input_path.suffix)):
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return candidate
+        return None
+
+    def _keep_smaller(self, input_path: Path, output_path: Path) -> tuple[Path, dict]:
+        """Keep the encode only if it is smaller; otherwise copy the original in its place.
+
+        Returns the path that was kept and the size metadata for the result.
+        """
+        input_size = input_path.stat().st_size
+        output_size = output_path.stat().st_size
+        if input_size == 0 or output_size < input_size:
+            ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
+            return output_path, {
+                "input_size": input_size,
+                "output_size": output_size,
+                "compression_ratio": f"{ratio:.1f}%",
+            }
+
+        kept_path = output_path.with_suffix(input_path.suffix)
+        output_path.unlink()
+        shutil.copy2(input_path, kept_path)
+        self.logger.info(
+            "kept_original",
+            input=str(input_path),
+            output=str(kept_path),
+            input_size=input_size,
+            encoded_size=output_size,
+        )
+        return kept_path, {
+            "input_size": input_size,
+            "output_size": input_size,
+            "compression_ratio": "0.0%",
+            "kept_original": True,
+        }
+
     def _process_image(self, input_path: Path) -> ProcessorResult:
         """Process image optimization."""
         output_path = self.get_output_path(input_path, suffix=self.config.output_suffix)
         output_path = output_path.with_suffix(f".{self.image_format.value}")
 
         try:
-            # Skip if a valid (non-empty) output already exists. The size check
-            # ensures previously-failed 0-byte outputs are re-encoded, not skipped.
-            if (
-                output_path.exists()
-                and output_path.stat().st_size > 0
-                and self.config.skip_existing
-            ):
+            existing = self._existing_output(input_path, output_path)
+            if existing and self.config.skip_existing:
                 self.logger.info(
                     "skipping_existing",
                     input=str(input_path),
-                    output=str(output_path),
+                    output=str(existing),
                 )
                 return ProcessorResult(
                     input_path,
-                    output_path=output_path,
+                    output_path=existing,
                     success=True,
                     metadata={"skipped": True},
                 )
@@ -189,19 +228,12 @@ class MediaOptimizationProcessor(BaseProcessor):
                 if self.config.verify_integrity and not output_path.exists():
                     raise OSError("Output file was not created")
 
-                input_size = input_path.stat().st_size
-                output_size = output_path.stat().st_size
-                compression_ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
-
+                kept_path, metadata = self._keep_smaller(input_path, output_path)
                 return ProcessorResult(
                     input_path,
-                    output_path=output_path,
+                    output_path=kept_path,
                     success=True,
-                    metadata={
-                        "input_size": input_size,
-                        "output_size": output_size,
-                        "compression_ratio": f"{compression_ratio:.1f}%",
-                    },
+                    metadata=metadata,
                 )
 
             except Exception as e:
@@ -224,21 +256,16 @@ class MediaOptimizationProcessor(BaseProcessor):
         output_path = output_path.with_suffix(f".{self.video_format.value}")
 
         try:
-            # Skip if a valid (non-empty) output already exists. The size check
-            # ensures previously-failed 0-byte outputs are re-encoded, not skipped.
-            if (
-                output_path.exists()
-                and output_path.stat().st_size > 0
-                and self.config.skip_existing
-            ):
+            existing = self._existing_output(input_path, output_path)
+            if existing and self.config.skip_existing:
                 self.logger.info(
                     "skipping_existing",
                     input=str(input_path),
-                    output=str(output_path),
+                    output=str(existing),
                 )
                 return ProcessorResult(
                     input_path,
-                    output_path=output_path,
+                    output_path=existing,
                     success=True,
                     metadata={"skipped": True},
                 )
@@ -267,19 +294,12 @@ class MediaOptimizationProcessor(BaseProcessor):
                 if self.config.verify_integrity and not output_path.exists():
                     raise OSError("Output file was not created")
 
-                input_size = input_path.stat().st_size
-                output_size = output_path.stat().st_size
-                compression_ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
-
+                kept_path, metadata = self._keep_smaller(input_path, output_path)
                 return ProcessorResult(
                     input_path,
-                    output_path=output_path,
+                    output_path=kept_path,
                     success=True,
-                    metadata={
-                        "input_size": input_size,
-                        "output_size": output_size,
-                        "compression_ratio": f"{compression_ratio:.1f}%",
-                    },
+                    metadata=metadata,
                 )
 
             except subprocess.TimeoutExpired:

@@ -344,6 +344,28 @@ def test_video_skip_existing(config, video, monkeypatch) -> None:
     assert result.metadata == {"skipped": True}
 
 
+def test_video_larger_than_source_keeps_original(config, video, monkeypatch) -> None:
+    def bloated(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"\x01" * 128)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mo, "_encoder_available", lambda name: False)
+    monkeypatch.setattr(mo.subprocess, "run", bloated)
+    proc = mo.MediaOptimizationProcessor(config, video_format=MediaFormat.WEBM)
+    result = proc.process(video)
+
+    assert result.success, result.error
+    assert result.metadata["kept_original"] is True
+    assert result.output_path == config.output_dir / "clip_optimized.mp4"
+    assert result.output_path.read_bytes() == video.read_bytes()
+    assert not (config.output_dir / "clip_optimized.webm").exists()
+
+    monkeypatch.setattr(mo.subprocess, "run", lambda *a, **k: pytest.fail("must not encode"))
+    rerun = proc.process(video)
+    assert rerun.metadata == {"skipped": True}
+    assert rerun.output_path == result.output_path
+
+
 def test_encoder_probe_parses_ffmpeg_output(monkeypatch) -> None:
     mo._encoder_available.cache_clear()
     monkeypatch.setattr(
