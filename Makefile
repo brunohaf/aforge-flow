@@ -12,8 +12,8 @@ PYTHON       ?= python
 else
 PYTHON       ?= python3
 endif
-IN           ?= assets
-OUT          ?= output
+IN           ?= assets/inputs
+OUT          ?= assets/outputs
 IMAGE_FORMAT ?= webp
 VIDEO_FORMAT ?= webm
 COMPRESSION  ?= balanced
@@ -58,7 +58,7 @@ direnv: ## Trust .envrc so direnv auto-activates .venv on cd
 protect-main: ## Apply .github/rulesets/main.json (resolved threads + green checks); repo must be public or Pro
 	@$(PYTHON) scripts/make_helpers.py ruleset
 
-dirs: ## Create the IN and OUT folders (default: assets/ and output/)
+dirs: ## Create the IN and OUT folders (default: assets/inputs/ and assets/outputs/)
 	@$(HELPER) mkdir $(IN) $(OUT)
 
 ##@ Pipeline   (vars: IN OUT IMAGE_FORMAT COMPRESSION CATEGORY DEVICE ARGS)

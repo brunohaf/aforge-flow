@@ -26,7 +26,7 @@ def cmd_help(makefile: str = "Makefile") -> int:
             print(f"\n{m.group(1)}")
         elif m := _TARGET.match(line):
             print(f"  {m.group(1):<20} {m.group(2)}")
-    print("\nVariables: IN=assets OUT=output IMAGE_FORMAT=webp COMPRESSION=balanced")
+    print("\nVariables: IN=assets/inputs OUT=assets/outputs IMAGE_FORMAT=webp COMPRESSION=balanced")
     print("           CATEGORY=general DEVICE=--gpu ARGS='<extra aforge flags>'")
     return 0
 
