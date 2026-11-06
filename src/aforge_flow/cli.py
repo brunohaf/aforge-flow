@@ -6,6 +6,8 @@ import click
 
 from aforge_flow import __version__
 from aforge_flow.config import (
+    DEFAULT_INPUT_DIR,
+    DEFAULT_OUTPUT_DIR,
     AssetCategory,
     CaptionBackend,
     ClipModelChoice,
@@ -83,11 +85,11 @@ def main() -> None:
 
     \b
     Examples:
-      aforge recommend -i assets --video-format webm
-      aforge go -i assets -o output --auto-tune --profile tabletop
-      aforge optimize -i assets -o output --image-format webp --video-format webm
-      aforge rename -i assets -o output
-      aforge classify -i assets --clip-model siglip2 --vlm-fallback
+      aforge recommend -i assets/inputs --video-format webm
+      aforge go -i assets/inputs -o assets/outputs --auto-tune --profile tabletop
+      aforge optimize -i assets/inputs -o assets/outputs --image-format webp --video-format webm
+      aforge rename -i assets/inputs -o assets/outputs
+      aforge classify -i assets/inputs --clip-model siglip2 --vlm-fallback
 
     Run ``aforge <command> -h`` for per-command options.
     """
@@ -107,14 +109,14 @@ def main() -> None:
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory containing assets",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory for processed assets",
 )
 @click.option(
@@ -303,14 +305,14 @@ def process(
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory containing assets",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory for processed assets",
 )
 @click.option(
@@ -398,14 +400,14 @@ def remove_background(
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory containing media",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory for optimized media",
 )
 @click.option(
@@ -512,14 +514,14 @@ def optimize_media(
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory containing images",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory (sidecars are written next to inputs)",
 )
 @click.option(
@@ -624,14 +626,14 @@ def classify(
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory containing images",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory for renamed images",
 )
 @click.option(
@@ -756,14 +758,14 @@ def caption_rename(
     "--input",
     "-i",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="assets",
+    default=DEFAULT_INPUT_DIR.as_posix(),
     help="Input directory to scan for the recommendation",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(file_okay=False, dir_okay=True),
-    default="output",
+    default=DEFAULT_OUTPUT_DIR.as_posix(),
     help="Output directory (used in the suggested command line)",
 )
 @click.option(

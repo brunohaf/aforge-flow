@@ -140,15 +140,15 @@ def invoke(*args: str):
 
 
 def test_recommend_text_output(workdir: Path) -> None:
-    make_image(workdir / "assets" / "a.png")
-    result = invoke("recommend", "-i", "assets")
+    make_image(workdir / "assets" / "inputs" / "a.png")
+    result = invoke("recommend", "-i", "assets/inputs")
     assert result.exit_code == 0, result.output
     assert "PERFORMANCE RECOMMENDATION" in result.output
     assert "Suggested command:" in result.output
 
 
 def test_auto_tune_overrides_workers(workdir: Path, monkeypatch) -> None:
-    make_image(workdir / "assets" / "a.png")
+    make_image(workdir / "assets" / "inputs" / "a.png")
     configs: list = []
 
     class Recording:
@@ -161,7 +161,9 @@ def test_auto_tune_overrides_workers(workdir: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_apply_auto_tune", lambda *a, **k: (False, 2))
     monkeypatch.setattr(cli, "AssetPipeline", Recording)
-    result = invoke("optimize", "-i", "assets", "-o", "output", "--gpu", "--auto-tune")
+    result = invoke(
+        "optimize", "-i", "assets/inputs", "-o", "assets/outputs", "--gpu", "--auto-tune"
+    )
     assert result.exit_code == 0, result.output
     assert configs[0].max_workers == 2
     assert configs[0].use_gpu is False
@@ -194,7 +196,7 @@ def test_every_bundled_model_id_is_pinned() -> None:
     ],
 )
 def test_pipeline_errors_propagate(workdir: Path, monkeypatch, command) -> None:
-    make_image(workdir / "assets" / "a.png")
+    make_image(workdir / "assets" / "inputs" / "a.png")
 
     class Exploding:
         def __init__(self, config) -> None: ...
@@ -203,7 +205,7 @@ def test_pipeline_errors_propagate(workdir: Path, monkeypatch, command) -> None:
             raise RuntimeError("disk full")
 
     monkeypatch.setattr(cli, "AssetPipeline", Exploding)
-    result = invoke(*command, "-i", "assets", "-o", "output", "--cpu")
+    result = invoke(*command, "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
     assert result.exit_code != 0
     assert isinstance(result.exception, RuntimeError)
 
@@ -227,10 +229,10 @@ def client(workdir: Path):
 
     from aforge_flow.web import create_app
 
-    make_image(workdir / "assets" / "a.png", seed=1)
-    make_image(workdir / "assets" / "b.png", seed=2)
-    (workdir / "assets" / "notes.txt").write_text("x")
-    (workdir / "assets" / "sub").mkdir()
+    make_image(workdir / "assets" / "inputs" / "a.png", seed=1)
+    make_image(workdir / "assets" / "inputs" / "b.png", seed=2)
+    (workdir / "assets" / "inputs" / "notes.txt").write_text("x")
+    (workdir / "assets" / "inputs" / "sub").mkdir()
     return TestClient(create_app(workdir), base_url="http://127.0.0.1:8000")
 
 
@@ -248,18 +250,20 @@ def run_job(client, **body) -> dict:
 
 
 def test_browse_lists_dirs_and_supported_files_only(client) -> None:
-    entries = client.get("/api/browse", params={"path": "assets"}).json()["entries"]
+    entries = client.get("/api/browse", params={"path": "assets/inputs"}).json()["entries"]
     names = [e["name"] for e in entries]
     assert names == ["sub", "a.png", "b.png"]
     assert client.get("/api/browse", params={"path": "assets/a.png"}).status_code == 400
 
 
 def test_file_thumbnail_and_bad_image(client, workdir: Path) -> None:
-    resp = client.get("/api/file", params={"path": "assets/a.png", "thumb": True})
+    resp = client.get("/api/file", params={"path": "assets/inputs/a.png", "thumb": True})
     assert resp.status_code == 200 and resp.headers["content-type"] == "image/png"
-    (workdir / "assets" / "broken.png").write_bytes(b"nope")
+    (workdir / "assets" / "inputs" / "broken.png").write_bytes(b"nope")
     assert (
-        client.get("/api/file", params={"path": "assets/broken.png", "thumb": True}).status_code
+        client.get(
+            "/api/file", params={"path": "assets/inputs/broken.png", "thumb": True}
+        ).status_code
         == 415
     )
     assert client.get("/api/file", params={"path": "assets/missing.png"}).status_code == 404
@@ -267,7 +271,10 @@ def test_file_thumbnail_and_bad_image(client, workdir: Path) -> None:
 
 def test_files_job_streams_events_and_zips_outputs(client) -> None:
     state = run_job(
-        client, mode="files", targets=["assets/a.png", "assets/b.png"], image_format="png"
+        client,
+        mode="files",
+        targets=["assets/inputs/a.png", "assets/inputs/b.png"],
+        image_format="png",
     )
     assert state["status"] == "completed", state
     assert len(state["outputs"]) == 2
@@ -285,17 +292,22 @@ def test_job_error_paths(client) -> None:
     assert client.get("/api/jobs/nope/events").status_code == 404
     assert client.get("/api/jobs/nope/download.zip").status_code == 404
     assert (
-        client.post("/api/jobs", json={"targets": ["assets"], "compression": "zip"}).status_code
+        client.post(
+            "/api/jobs", json={"targets": ["assets/inputs"], "compression": "zip"}
+        ).status_code
         == 400
     )
     assert (
-        client.post("/api/jobs", json={"targets": ["assets"], "category": "dragonish"}).status_code
+        client.post(
+            "/api/jobs", json={"targets": ["assets/inputs"], "category": "dragonish"}
+        ).status_code
         == 400
     )
     assert (
-        client.post("/api/jobs", json={"mode": "files", "targets": ["assets"]}).status_code == 400
+        client.post("/api/jobs", json={"mode": "files", "targets": ["assets/inputs"]}).status_code
+        == 400
     )
-    assert client.post("/api/jobs", json={"targets": ["assets/a.png"]}).status_code == 400
+    assert client.post("/api/jobs", json={"targets": ["assets/inputs/a.png"]}).status_code == 400
 
 
 def test_empty_job_has_nothing_to_zip(client, workdir: Path) -> None:

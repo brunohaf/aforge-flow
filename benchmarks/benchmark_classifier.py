@@ -22,7 +22,7 @@ operating point with useful precision.
 
 Examples
 --------
-    python benchmarks/benchmark_classifier.py throughput -i assets --batch-size 64
+    python benchmarks/benchmark_classifier.py throughput -i assets/inputs --batch-size 64
     python benchmarks/benchmark_classifier.py throughput --clip-model clip
     python benchmarks/benchmark_classifier.py eval --labels val.csv --threshold 0.85
 """
@@ -34,7 +34,7 @@ import csv
 import time
 from pathlib import Path
 
-from aforge_flow.config import ClipModelChoice, Config
+from aforge_flow.config import DEFAULT_INPUT_DIR, ClipModelChoice, Config
 from aforge_flow.processors.creature_classification import (
     CreatureClassificationProcessor,
 )
@@ -166,7 +166,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="mode", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("-i", "--input", default="assets")
+    common.add_argument("-i", "--input", default=DEFAULT_INPUT_DIR.as_posix())
     common.add_argument(
         "--clip-model", default="siglip2", choices=[m.value for m in ClipModelChoice]
     )

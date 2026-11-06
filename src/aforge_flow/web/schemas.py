@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from aforge_flow.config import DEFAULT_OUTPUT_DIR
+
 
 class JobRequest(BaseModel):
     """A processing request coming from the UI.
@@ -22,7 +24,8 @@ class JobRequest(BaseModel):
         default_factory=list, description="Paths relative to root (or absolute under root)"
     )
     output_dir: str = Field(
-        default="output", description="Output directory (relative to root or absolute under root)"
+        default=DEFAULT_OUTPUT_DIR.as_posix(),
+        description="Output directory (relative to root or absolute under root)",
     )
 
     remove_background: bool = True

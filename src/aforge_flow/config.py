@@ -5,6 +5,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+DEFAULT_INPUT_DIR = Path("assets/inputs")
+DEFAULT_OUTPUT_DIR = Path("assets/outputs")
+
 
 class AssetCategory(str, Enum):
     HUMANOID = "humanoid"
@@ -146,8 +149,8 @@ class CompressionLevel(int, Enum):
 class Config(BaseModel):
     """Main configuration for asset optimizer."""
 
-    input_dir: Path = Field(default=Path("assets"), description="Input assets directory")
-    output_dir: Path = Field(default=Path("output"), description="Output assets directory")
+    input_dir: Path = Field(default=DEFAULT_INPUT_DIR, description="Input assets directory")
+    output_dir: Path = Field(default=DEFAULT_OUTPUT_DIR, description="Output assets directory")
     cache_dir: Path = Field(default=Path(".cache"), description="Cache directory for models")
 
     use_gpu: bool = Field(default=True, description="Use GPU acceleration")

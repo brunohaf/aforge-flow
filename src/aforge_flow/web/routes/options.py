@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from aforge_flow.config import (
+    DEFAULT_OUTPUT_DIR,
     AssetCategory,
     CompressionLevel,
     MediaFormat,
@@ -37,6 +38,6 @@ def get_options() -> dict:
             "use_gpu": True,
             "workers": 1,
             "skip_existing": True,
-            "output_dir": "output",
+            "output_dir": DEFAULT_OUTPUT_DIR.as_posix(),
         },
     }

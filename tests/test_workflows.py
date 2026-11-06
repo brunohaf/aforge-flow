@@ -34,8 +34,8 @@ def run(*args: str) -> str:
 
 @pytest.fixture
 def assets(workdir: Path) -> Path:
-    """``assets/`` with two top-level images and one nested one."""
-    root = workdir / "assets"
+    """``assets/inputs/`` with two top-level images and one nested one."""
+    root = workdir / "assets" / "inputs"
     make_image(root / "Balhannoth.png", seed=1)
     make_image(root / "Brain in a Jar.png", seed=2)
     make_image(root / "items" / "Longsword.png", seed=3)
@@ -46,9 +46,9 @@ def test_optimize_png_lossless_is_pixel_exact(assets: Path, workdir: Path) -> No
     run(
         "optimize",
         "-i",
-        "assets",
+        "assets/inputs",
         "-o",
-        "output",
+        "assets/outputs",
         "--image-format",
         "png",
         "--compression",
@@ -57,32 +57,34 @@ def test_optimize_png_lossless_is_pixel_exact(assets: Path, workdir: Path) -> No
     )
 
     src = Image.open(assets / "Balhannoth.png")
-    out = Image.open(workdir / "output" / "Balhannoth_optimized.png")
+    out = Image.open(workdir / "assets" / "outputs" / "Balhannoth_optimized.png")
     assert out.mode == "RGBA", "alpha channel must survive"
     assert out.tobytes() == src.tobytes()
 
 
 def test_optimize_mirrors_subdirectories(assets: Path, workdir: Path) -> None:
-    run("optimize", "-i", "assets", "-o", "output", "--cpu")
+    run("optimize", "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
 
-    assert (workdir / "output" / "items" / "Longsword_optimized.webp").is_file()
-    assert len(list((workdir / "output").rglob("*.webp"))) == 3
+    assert (workdir / "assets" / "outputs" / "items" / "Longsword_optimized.webp").is_file()
+    assert len(list((workdir / "assets" / "outputs").rglob("*.webp"))) == 3
 
 
 def test_optimize_jpeg_flattens_alpha(assets: Path, workdir: Path) -> None:
-    run("optimize", "-i", "assets", "-o", "output", "--image-format", "jpeg", "--cpu")
+    run(
+        "optimize", "-i", "assets/inputs", "-o", "assets/outputs", "--image-format", "jpeg", "--cpu"
+    )
 
-    out = Image.open(workdir / "output" / "Balhannoth_optimized.jpeg")
+    out = Image.open(workdir / "assets" / "outputs" / "Balhannoth_optimized.jpeg")
     assert out.mode == "RGB"
 
 
 def test_optimize_skip_existing_does_not_rewrite(assets: Path, workdir: Path) -> None:
-    run("optimize", "-i", "assets", "-o", "output", "--image-format", "png", "--cpu")
-    target = workdir / "output" / "Balhannoth_optimized.png"
+    run("optimize", "-i", "assets/inputs", "-o", "assets/outputs", "--image-format", "png", "--cpu")
+    target = workdir / "assets" / "outputs" / "Balhannoth_optimized.png"
     first = target.stat().st_mtime_ns
 
     time.sleep(0.05)
-    run("optimize", "-i", "assets", "-o", "output", "--image-format", "png", "--cpu")
+    run("optimize", "-i", "assets/inputs", "-o", "assets/outputs", "--image-format", "png", "--cpu")
 
     assert target.stat().st_mtime_ns == first
 
@@ -90,13 +92,13 @@ def test_optimize_skip_existing_does_not_rewrite(assets: Path, workdir: Path) ->
 def test_remove_background_writes_transparent_png(
     assets: Path, workdir: Path, fake_rembg: dict
 ) -> None:
-    run("remove-background", "-i", "assets", "-o", "output", "--cpu")
+    run("remove-background", "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
 
-    out = Image.open(workdir / "output" / "Balhannoth_nobg.png")
+    out = Image.open(workdir / "assets" / "outputs" / "Balhannoth_nobg.png")
     assert out.mode == "RGBA"
     assert alpha_at(out, (0, 0)) == 0, "masked region must be transparent"
     assert alpha_at(out, (out.width - 1, 0)) == 255
-    assert (workdir / "output" / "items" / "Longsword_nobg.png").is_file()
+    assert (workdir / "assets" / "outputs" / "items" / "Longsword_nobg.png").is_file()
 
 
 @pytest.mark.parametrize(
@@ -110,7 +112,16 @@ def test_remove_background_writes_transparent_png(
 def test_remove_background_routes_model_by_category(
     assets: Path, fake_rembg: dict, category: str, model: RembgModel
 ) -> None:
-    run("remove-background", "-i", "assets", "-o", "output", "--cpu", "--category", category)
+    run(
+        "remove-background",
+        "-i",
+        "assets/inputs",
+        "-o",
+        "assets/outputs",
+        "--cpu",
+        "--category",
+        category,
+    )
 
     assert fake_rembg["models"] == [model.value]
 
@@ -121,9 +132,9 @@ def test_remove_background_explicit_model_overrides_category(
     run(
         "remove-background",
         "-i",
-        "assets",
+        "assets/inputs",
         "-o",
-        "output",
+        "assets/outputs",
         "--cpu",
         "--category",
         "item",
@@ -137,9 +148,9 @@ def test_remove_background_explicit_model_overrides_category(
 def test_process_chains_background_removal_into_optimization(
     assets: Path, workdir: Path, fake_rembg: dict
 ) -> None:
-    run("process", "-i", "assets", "-o", "output", "--image-format", "png", "--cpu")
+    run("process", "-i", "assets/inputs", "-o", "assets/outputs", "--image-format", "png", "--cpu")
 
-    final = workdir / "output" / "Balhannoth_nobg_optimized.png"
+    final = workdir / "assets" / "outputs" / "Balhannoth_nobg_optimized.png"
     assert final.is_file()
     assert alpha_at(Image.open(final), (0, 0)) == 0, "transparency must survive optimization"
 
@@ -147,8 +158,12 @@ def test_process_chains_background_removal_into_optimization(
 @pytest.mark.parametrize(
     "in_dir, out_dir, final",
     [
-        (".", "output", "output/assets/items/Longsword_nobg_optimized.png"),
-        ("assets", "assets/out", "assets/out/items/Longsword_nobg_optimized.png"),
+        (".", "assets/outputs", "assets/outputs/assets/inputs/items/Longsword_nobg_optimized.png"),
+        (
+            "assets/inputs",
+            "assets/inputs/out",
+            "assets/inputs/out/items/Longsword_nobg_optimized.png",
+        ),
     ],
 )
 def test_process_with_output_nested_in_input_keeps_one_level(
@@ -162,9 +177,9 @@ def test_process_with_output_nested_in_input_keeps_one_level(
 
 @pytest.mark.parametrize("alias", ["go", "pipe"])
 def test_process_aliases(assets: Path, workdir: Path, fake_rembg: dict, alias: str) -> None:
-    run(alias, "-i", "assets", "-o", "output", "--no-background-removal", "--cpu")
+    run(alias, "-i", "assets/inputs", "-o", "assets/outputs", "--no-background-removal", "--cpu")
 
-    assert (workdir / "output" / "Balhannoth_optimized.webp").is_file()
+    assert (workdir / "assets" / "outputs" / "Balhannoth_optimized.webp").is_file()
 
 
 class _RecordingPipeline:
@@ -188,21 +203,21 @@ def recorded(monkeypatch) -> list:
 
 
 def test_process_tabletop_profile_enables_classify_and_naming(assets: Path, recorded: list) -> None:
-    run("process", "-i", "assets", "--profile", "tabletop")
+    run("process", "-i", "assets/inputs", "--profile", "tabletop")
 
     assert recorded[0].classification_enabled is True
     assert recorded[0].caption_rename_enabled is True
 
 
 def test_process_explicit_flag_beats_profile(assets: Path, recorded: list) -> None:
-    run("process", "-i", "assets", "--profile", "tabletop", "--no-classify")
+    run("process", "-i", "assets/inputs", "--profile", "tabletop", "--no-classify")
 
     assert recorded[0].classification_enabled is False
     assert recorded[0].caption_rename_enabled is True
 
 
 def test_process_default_profile_is_opt_in(assets: Path, recorded: list) -> None:
-    run("process", "-i", "assets")
+    run("process", "-i", "assets/inputs")
 
     assert recorded[0].classification_enabled is False
     assert recorded[0].caption_rename_enabled is False
@@ -217,9 +232,9 @@ def test_rename_keeps_meaningful_names_without_loading_a_model(
         raise AssertionError("captioning model must not load for meaningful names")
 
     monkeypatch.setattr(caption_naming, "_make_backend", no_model)
-    run("rename", "-i", "assets", "-o", "output", "--cpu")
+    run("rename", "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
 
-    out = workdir / "output"
+    out = workdir / "assets" / "outputs"
     assert (out / "balhannoth-1.png").is_file()
     assert (out / "brain-jar-1.png").is_file()
     assert (out / "items" / "longsword-1.png").is_file()
@@ -236,15 +251,15 @@ def test_rename_captions_junk_names(workdir: Path, monkeypatch) -> None:
             return "beholder"
 
     monkeypatch.setattr(caption_naming, "_make_backend", lambda *_a, **_k: FakeBackend())
-    make_image(workdir / "assets" / "900297781783770851.png", seed=7)
+    make_image(workdir / "assets" / "inputs" / "900297781783770851.png", seed=7)
 
-    run("caption-rename", "-i", "assets", "-o", "output", "--cpu")
+    run("caption-rename", "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
 
-    assert (workdir / "output" / "beholder-1.png").is_file()
+    assert (workdir / "assets" / "outputs" / "beholder-1.png").is_file()
 
 
 def test_classify_writes_sidecars(assets: Path, patched_encoder: dict) -> None:
-    run("classify", "-i", "assets", "-o", "output", "--cpu")
+    run("classify", "-i", "assets/inputs", "-o", "assets/outputs", "--cpu")
 
     sidecars = sorted(assets.rglob("*.classification.json"))
     assert len(sidecars) == 3, "one sidecar per image, next to the input"
@@ -254,7 +269,7 @@ def test_classify_writes_sidecars(assets: Path, patched_encoder: dict) -> None:
 
 
 def test_recommend_json_reports_workload(assets: Path) -> None:
-    payload = json.loads(run("recommend", "-i", "assets", "--json"))
+    payload = json.loads(run("recommend", "-i", "assets/inputs", "--json"))
 
     assert payload["command_line"].startswith("aforge optimize")
     assert payload["workload"]["num_images"] == 3
@@ -297,7 +312,7 @@ def test_web_health_and_options(client) -> None:
 
 
 def test_web_browse_rejects_path_traversal(client) -> None:
-    assert client.get("/api/browse", params={"path": "assets"}).status_code == 200
+    assert client.get("/api/browse", params={"path": "assets/inputs"}).status_code == 200
     assert client.get("/api/browse", params={"path": "../"}).status_code == 403
 
 
@@ -306,8 +321,8 @@ def test_web_job_optimizes_a_directory(client, workdir: Path) -> None:
         "/api/jobs",
         json={
             "mode": "directory",
-            "targets": ["assets"],
-            "output_dir": "output",
+            "targets": ["assets/inputs"],
+            "output_dir": "assets/outputs",
             "remove_background": False,
             "image_format": "png",
             "use_gpu": False,
@@ -322,14 +337,14 @@ def test_web_job_optimizes_a_directory(client, workdir: Path) -> None:
         time.sleep(0.05)
 
     assert state["status"] == "completed", state
-    assert (workdir / "output" / "Balhannoth_optimized.png").is_file()
+    assert (workdir / "assets" / "outputs" / "Balhannoth_optimized.png").is_file()
 
 
 def test_web_refuses_non_media_files(client, workdir: Path) -> None:
     (workdir / ".env").write_text("SECRET=1", encoding="utf-8")
     for route in ("/api/file", "/api/download"):
         assert client.get(route, params={"path": ".env"}).status_code == 403
-        assert client.get(route, params={"path": "assets/Balhannoth.png"}).status_code == 200
+        assert client.get(route, params={"path": "assets/inputs/Balhannoth.png"}).status_code == 200
 
 
 def test_web_rejects_foreign_host_header(client) -> None:
@@ -349,7 +364,7 @@ def test_web_upload_rejects_unsupported_type_without_creating_dirs(client, workd
 
 
 def test_web_upload_stores_media_under_uploads(client, workdir: Path) -> None:
-    png = (workdir / "assets" / "Balhannoth.png").read_bytes()
+    png = (workdir / "assets" / "inputs" / "Balhannoth.png").read_bytes()
     resp = client.post("/api/upload", files={"files": ("../../x.png", png, "image/png")})
     assert resp.status_code == 200
     (target,) = resp.json()["targets"]
@@ -381,6 +396,6 @@ def test_web_job_rejects_workers_above_cpu_count(client) -> None:
     import os
 
     resp = client.post(
-        "/api/jobs", json={"targets": ["assets"], "workers": (os.cpu_count() or 1) + 1}
+        "/api/jobs", json={"targets": ["assets/inputs"], "workers": (os.cpu_count() or 1) + 1}
     )
     assert resp.status_code == 422
