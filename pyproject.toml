@@ -30,6 +30,8 @@ classifiers = [
 dependencies = [
     # 2.0.76 is the version RembgModel names are validated against (config.py).
     "rembg[gpu]>=2.0.76",
+    # 1.27+ wheels on PyPI target CUDA 13; <1.27 targets CUDA 12 to match the cu126 torch index.
+    "onnxruntime-gpu>=1.21,<1.27",
     "opencv-python>=4.8.0",
     "pillow>=10.0.0",
     "numpy>=1.24.0",
