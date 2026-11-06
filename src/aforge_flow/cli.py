@@ -818,6 +818,7 @@ def recommend(
     click.echo(f"  GPU (CUDA):     {gpu_str}" + (f"  ({hw.gpu_name})" if hw.gpu_name else ""))
     click.echo(f"  VRAM:           {vram}")
     click.echo(f"  av1_nvenc:      {'Yes' if hw.has_av1_nvenc else 'No'}")
+    click.echo(f"  h264_nvenc:     {'Yes' if hw.has_h264_nvenc else 'No'}")
     click.echo("Workload:")
     click.echo(f"  Images:         {workload.num_images}")
     click.echo(

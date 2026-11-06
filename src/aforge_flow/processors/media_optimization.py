@@ -17,9 +17,8 @@ logger = structlog.get_logger(__name__)
 #
 # Video params are codec-specific because each encoder uses a different quality
 # control: ``crf``/``preset`` for libx264 (mp4), ``crf``/``cpu_used`` for
-# libvpx-vp9 (CPU WebM), and ``cq`` for av1_nvenc (GPU WebM). The cq/cpu_used
-# columns are added alongside the existing crf/preset so all three codecs map
-# from the same compression level.
+# libvpx-vp9 (CPU WebM), and ``cq`` for av1_nvenc (GPU WebM). h264_nvenc (GPU mp4)
+# reuses ``crf`` as its ``-cq`` since both use the H.264 quantizer scale.
 QUALITY_PRESETS = {
     CompressionLevel.LOSSLESS: {
         "image": {"quality": 95, "method": 6},
@@ -306,14 +305,17 @@ class MediaOptimizationProcessor(BaseProcessor):
     def _select_video_encoder(self) -> str:
         """Pick the video encoder for the configured output format.
 
-        WebM prefers GPU AV1 (``av1_nvenc``) when GPU use is enabled and NVENC is
-        available, falling back to CPU ``libvpx-vp9``. Other formats use
-        ``libx264``. Note there is no ``vp9_nvenc`` on NVIDIA, so VP9 is always CPU.
+        With GPU use enabled, WebM uses ``av1_nvenc`` (Ada/RTX 40+ only) and other
+        formats use ``h264_nvenc``, each only if a test encode succeeds. Otherwise
+        WebM falls back to CPU ``libvpx-vp9`` and other formats to ``libx264``.
+        NVIDIA has no VP9 encoder, so VP9 is always CPU.
         """
         if self.video_format == MediaFormat.WEBM:
             if self.config.use_gpu and _encoder_available("av1_nvenc"):
                 return "av1_nvenc"
             return "libvpx-vp9"
+        if self.config.use_gpu and _encoder_available("h264_nvenc"):
+            return "h264_nvenc"
         return "libx264"
 
     def _build_ffmpeg_command(
@@ -340,6 +342,19 @@ class MediaOptimizationProcessor(BaseProcessor):
                 "vbr",
                 "-cq",
                 str(quality_preset["cq"]),
+                "-b:v",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        elif video_encoder == "h264_nvenc":
+            cmd += [
+                "-preset",
+                "p5",
+                "-rc",
+                "vbr",
+                "-cq",
+                str(quality_preset["crf"]),
                 "-b:v",
                 "0",
                 "-pix_fmt",

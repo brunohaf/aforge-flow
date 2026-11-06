@@ -45,7 +45,9 @@ def work(images=0, videos=0, largest=0) -> rec.WorkloadInfo:
     [
         (hw(has_cuda=False), "webm", False, "No CUDA GPU"),
         (hw(), "mp4", False, "encodes on CPU"),
+        (hw(has_h264_nvenc=True), "mp4", True, "GPU H.264 NVENC"),
         (hw(has_av1_nvenc=False), "webm", False, "av1_nvenc is unavailable"),
+        (hw(has_av1_nvenc=False, has_h264_nvenc=True), "webm", False, "--video-format mp4"),
         (hw(), "webm", True, "GPU AV1 NVENC"),
     ],
 )

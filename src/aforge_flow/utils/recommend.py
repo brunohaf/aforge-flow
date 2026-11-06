@@ -61,6 +61,7 @@ class HardwareInfo:
     total_vram_gb: float | None
     free_vram_gb: float | None
     has_av1_nvenc: bool
+    has_h264_nvenc: bool = False
 
 
 @dataclass
@@ -125,6 +126,7 @@ def detect_hardware() -> HardwareInfo:
         total_vram_gb=round(total_vram_gb, 1) if total_vram_gb is not None else None,
         free_vram_gb=round(free_vram_gb, 1) if free_vram_gb is not None else None,
         has_av1_nvenc=_encoder_available("av1_nvenc"),
+        has_h264_nvenc=_encoder_available("h264_nvenc"),
     )
 
 
@@ -170,8 +172,8 @@ def recommend_settings(
 ) -> Recommendation:
     """Recommend ``use_gpu`` and ``workers`` from hardware + workload.
 
-    GPU acceleration today only benefits the WebM path (av1_nvenc); mp4/mkv are
-    still CPU libx264, so ``use_gpu`` is reported False (with a note) for them.
+    ``use_gpu`` is True only when the target format has a working NVENC encoder:
+    av1_nvenc for WebM, h264_nvenc for everything else.
     """
     notes: list[str] = []
     warnings: list[str] = []
@@ -183,22 +185,26 @@ def recommend_settings(
     if not hw.has_cuda:
         use_gpu = False
         notes.append("No CUDA GPU detected — using CPU encoders.")
-    elif not is_webm:
-        use_gpu = False
-        notes.append(
-            f"--video-format {video_format} encodes on CPU (libx264) today; "
-            "--gpu only accelerates the WebM (av1_nvenc) path. Use --video-format "
-            "webm to engage the GPU."
-        )
-    elif not hw.has_av1_nvenc:
-        use_gpu = False
-        notes.append(
-            "GPU present but av1_nvenc is unavailable in this ffmpeg build — "
-            "falling back to CPU libvpx-vp9 for WebM."
-        )
-    else:
+    elif is_webm and hw.has_av1_nvenc:
         use_gpu = True
         notes.append(f"GPU AV1 NVENC ({hw.gpu_name}) available for WebM encoding.")
+    elif not is_webm and hw.has_h264_nvenc:
+        use_gpu = True
+        notes.append(f"GPU H.264 NVENC ({hw.gpu_name}) available for {video_format} encoding.")
+    elif is_webm:
+        use_gpu = False
+        note = (
+            "GPU present but av1_nvenc is unavailable (needs an Ada/RTX 40+ GPU and an "
+            "NVENC-enabled ffmpeg) — falling back to CPU libvpx-vp9 for WebM."
+        )
+        if hw.has_h264_nvenc:
+            note += " Use --video-format mp4 to encode on the GPU (h264_nvenc)."
+        notes.append(note)
+    else:
+        use_gpu = False
+        notes.append(
+            f"h264_nvenc is unavailable — --video-format {video_format} encodes on CPU (libx264)."
+        )
 
     if has_videos and use_gpu:
         workers = GPU_VIDEO_WORKERS_WITH_IMAGES if has_images else GPU_VIDEO_WORKERS

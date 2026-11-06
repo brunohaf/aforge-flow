@@ -290,7 +290,9 @@ def _ffmpeg_ok(cmd, **_kwargs):
         (MediaFormat.WEBM, True, True, "av1_nvenc", "libopus"),
         (MediaFormat.WEBM, True, False, "libvpx-vp9", "libopus"),
         (MediaFormat.WEBM, False, True, "libvpx-vp9", "libopus"),
-        (MediaFormat.MP4, True, True, "libx264", "aac"),
+        (MediaFormat.MP4, True, True, "h264_nvenc", "aac"),
+        (MediaFormat.MP4, True, False, "libx264", "aac"),
+        (MediaFormat.MP4, False, True, "libx264", "aac"),
     ],
 )
 def test_video_encoder_selection_and_command(
