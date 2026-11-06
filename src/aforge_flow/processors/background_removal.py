@@ -184,6 +184,8 @@ class BackgroundRemovalProcessor(BaseProcessor):
         from rembg import new_session
 
         providers = self._build_providers(force_cpu)
+        if "CUDAExecutionProvider" in str(providers):
+            import torch  # noqa: F401
 
         try:
             session = new_session(self.model_name, providers=providers)
