@@ -347,9 +347,17 @@ def test_encoder_probe_parses_ffmpeg_output(monkeypatch) -> None:
     monkeypatch.setattr(
         mo.subprocess,
         "run",
-        lambda *a, **k: subprocess.CompletedProcess(a, 0, " V..... av1_nvenc  NVIDIA AV1", ""),
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""),
     )
     assert mo._encoder_available("av1_nvenc")
+    mo._encoder_available.cache_clear()
+
+    monkeypatch.setattr(
+        mo.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "No capable devices found"),
+    )
+    assert not mo._encoder_available("av1_nvenc")
     mo._encoder_available.cache_clear()
 
     def missing(*_a, **_k):

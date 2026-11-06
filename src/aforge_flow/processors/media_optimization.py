@@ -42,18 +42,36 @@ QUALITY_PRESETS = {
 
 @cache
 def _encoder_available(name: str) -> bool:
-    """Return True if the given ffmpeg encoder (e.g. ``av1_nvenc``) is present.
+    """Return True if ffmpeg can actually encode with ``name`` (e.g. ``av1_nvenc``).
 
-    Probes ``ffmpeg -encoders`` once and caches the result for the process.
+    Encodes one synthetic frame instead of reading ``ffmpeg -encoders``, which lists
+    NVENC encoders the GPU may not support (av1_nvenc needs Ada or newer).
+    Cached for the process.
     """
     try:
         out = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=size=256x256:rate=1",
+                "-frames:v",
+                "1",
+                "-c:v",
+                name,
+                "-f",
+                "null",
+                "-",
+            ],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
-        return name in out.stdout
+        return out.returncode == 0
     except Exception:
         return False
 
