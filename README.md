@@ -5,411 +5,167 @@
 </h1>
 
 <h4 align="center">
-GPU-accelerated toolkit for asset segmentation, optimization, conversion, and preparation for modern web and digital media workflows.
+GPU-accelerated toolkit for asset segmentation, optimization, conversion, and preparation for modern web and digital-media workflows.
 </h4>
 
 <p align="center">
   <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python"></a>
   <a href="#"><img src="https://img.shields.io/badge/cuda-optional-green.svg" alt="CUDA"></a>
+  <a href="#"><img src="https://img.shields.io/badge/packaging-uv-purple.svg" alt="uv"></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-linux%20%7C%20windows-lightgrey.svg" alt="Platform"></a>
 </p>
 
-<p align="center">
-  <a href="#key-features">Key Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#hardware-aware-tuning">Auto-Tuning</a> •
-  <a href="#creature-classification">Creature Classification</a> •
-  <a href="#asset-categories">Asset Categories</a> •
-  <a href="#background-removal-models">Models</a> •
-  <a href="#project-structure">Project Structure</a> •
-  <a href="#development">Development</a>
-</p>
-
-> AForge, transform, and optimize digital assets for virtual tabletops, web publishing, content libraries, and creative workflows.
+> AForge, transform, and optimize digital assets for virtual tabletops, web publishing, content libraries, and creative workflows — from a CLI **or** a local web UI.
 
 ---
 
-## Key Features
+## What's in this repo
 
-### AI-Powered Background Removal
+A **uv monorepo** with three independent projects:
 
-- GPU-accelerated image segmentation using Rembg and ONNX Runtime
-- Support for BiRefNet, ISNet, U²-Net, and specialized segmentation models
-- Automatic model selection based on asset category
-- High-quality alpha extraction for transparent PNG generation
-- Optimized for fantasy artwork, portraits, creatures, and RPG assets
+| Project | What it is | Run it with |
+|---------|------------|-------------|
+| [`aforge_flow/`](aforge_flow/README.md) | The **pipeline + CLI** — background removal, media optimization, creature classification, caption-rename. Standalone; no web stack required. | `aforge …` |
+| [`aforge_flow_api/`](aforge_flow_api/README.md) | A **FastAPI** service wrapping the pipeline: browse/upload, run jobs, stream live progress (SSE), download results. | `aforge-api` |
+| [`aforge_flow_ui/`](aforge_flow_ui/README.md) | A **React + Vite** single-page app (dark/light, pt-BR / en-US) that drives the API. | `npm run dev` |
 
-### Zero-Shot Creature Classification
+```
+┌──────────────────┐   HTTP/SSE   ┌──────────────────┐   imports   ┌────────────────────┐
+│  aforge_flow_ui  │ ───────────▶ │  aforge_flow_api │ ──────────▶ │     aforge_flow     │
+│   (React/Vite)   │ ◀─────────── │    (FastAPI)     │             │ (pipeline + `aforge`)│
+└──────────────────┘              └──────────────────┘             └────────────────────┘
+```
 
-- Classifies fantasy artwork into the 14 D&D creature types **from image content alone** — file names, folders, and metadata are ignored
-- Detects asset type (`Portrait` / `Token`) in the same pass
-- Built on a CLIP-family vision encoder (SigLIP 2 by default) with prompt-engineered text prototypes — no expensive VLM inference on the common case
-- Persistent embedding cache: every picture is embedded once, ever; re-runs do zero GPU work
-- Optional VLM fallback (Qwen2.5-VL) for the low-confidence tail only
-
-### Asset Optimization
-
-- WebP conversion and optimization
-- Image transcoding and compression
-- Directory structure preservation
-- Duplicate detection and skip-existing support
-- Integrity verification
-
-### Batch Processing
-
-- Large-scale asset library processing
-- Progress tracking and reporting
-- Structured logging
-- Hardware-aware tuning: `aforge recommend` inspects the machine + workload, and `--auto-tune` applies safe `--workers`/`--gpu` settings automatically
-- Resumable processing
+The dependency arrow only points one way: the API depends on the pipeline, never the reverse — so you can run **just the CLI** with none of the web stack installed.
 
 ---
 
-## Installation
+## The pipeline, in one breath
 
-### Prerequisites
-
-- Python 3.10+
-- FFmpeg
-- NVIDIA GPU + CUDA drivers (optional — enables GPU acceleration; CPU works too)
-
-Run `aforge recommend` after install to see what your machine supports and the suggested settings.
-
-### Conda Installation (Recommended)
-
-Install Miniconda:
-
-```bash
-wget -qO ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
-bash ~/miniconda.sh -b -p "$HOME/miniconda3"
-```
-
-Configure Conda:
-
-```bash
-eval "$("$HOME/miniconda3/bin/conda" shell.bash hook)"
-conda init bash
-conda config --add channels conda-forge
-conda config --set channel_priority flexible
-```
-
-Create environment:
-
-```bash
-git clone <repository-url>
-cd aforge-flow
-
-conda env create -f environment.yml
-conda activate aforge-flow
-
-pip install -e .
-```
-
-To enable **creature classification** (CLIP-family + optional VLM fallback),
-install the extra into the **conda env** (not your global Python):
-
-```bash
-conda activate aforge-flow
-pip install -e ".[classify]"
-```
-
-This pulls `transformers>=4.49` (required for SigLIP 2), `accelerate`, and
-`bitsandbytes` (Linux, for the optional 4-bit VLM fallback). The SigLIP 2
-weights (~1.5 GB) download to `.cache/` on first run.
-
-### Manual Installation
-
-```bash
-git clone <repository-url>
-cd aforge-flow
-
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -e .
-pip install "rembg[gpu]"
-```
+For each asset the pipeline can, in order: optionally **caption-rename** → optionally **classify** (creature taxonomy) → **remove background** → **optimize/transcode** (images → WebP, video → WebM). Background removal and optimization are on by default in `process`; classification and caption-rename are opt-in. See [`aforge_flow/README.md`](aforge_flow/README.md) for the full tour.
 
 ---
 
-## Quick Start
+## Quick start (uv)
 
-### Background Removal
-
-```bash
-aforge process \
-  --input assets/rembg/portraits \
-  --output output/portraits \
-  --background-removal \
-  --no-media-optimization \
-  --category portrait \
-  --gpu
-```
-
-### Media Optimization
+This repo uses **[uv](https://docs.astral.sh/uv/)** instead of conda/pip. Install it once:
 
 ```bash
-aforge optimize-media \
-  --input assets/webmp \
-  --output output/webmp \
-  --image-format webp \
-  --video-format webm \
-  --compression balanced
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-WebM video is encoded with GPU AV1 (NVENC) when a capable GPU is available, and
-falls back to CPU VP9 otherwise. Audio in WebM is encoded as Opus.
-
-### Hardware-Aware Tuning
-
-Let `aforge` pick safe, performant settings instead of guessing at `--workers`
-and `--gpu/--cpu`. The `recommend` command inspects your CPU, RAM, GPU/VRAM, and
-NVENC support, scans the input directory (image vs video mix and sizes), and
-prints a suggested command — without risking out-of-memory or encoder-session
-exhaustion:
+### Just the CLI (no web stack)
 
 ```bash
-aforge recommend --input assets --video-format webm
-# add --full-pipeline to tune for `process` (background removal + classification)
-# add --json for machine-readable output
+uv sync --package aforge-flow        # installs only the pipeline + its deps into .venv
+uv run aforge recommend -i assets    # inspect hardware + suggest settings
+uv run aforge process -i assets -o output --gpu
 ```
 
-To apply the same logic automatically at run time, pass `--auto-tune` to
-`optimize-media` or `process`. It overrides `--workers` and `--gpu/--cpu` with
-the recommended values and logs what it chose:
+### Background removal at scale (the big batch)
 
 ```bash
-aforge optimize-media --input assets --output output --video-format webm --auto-tune
+# 1) Confirm the GPU is actually active before committing to a long run.
+#    Prints the *active* ONNXRuntime providers + ms/image + projected 20k runtime.
+uv run aforge remove-background -i assets --benchmark 50
+
+# 2) Run it. Re-running resumes — finished *_nobg.png outputs are skipped (do NOT
+#    pass --no-skip-existing unless you intend to redo completed work).
+uv run aforge remove-background -i assets -o output --workers 3 --png-compress-level 1
 ```
 
-### Creature Classification
+Useful flags (`remove-background` and `process`): `--provider auto|tensorrt|cuda|cpu`
+(default `auto` → TensorRT→CUDA→CPU), `--fp16/--no-fp16`, `--png-compress-level 0-9`
+(zlib speed/size only — always lossless), `--workers N`, `--no-dedup`,
+`--ignore-dir NAME` (repeatable, matched at any depth), and `--ignore-extension EXT`
+(repeatable; `remove-background` excludes video extensions by default). Run
+`uv run aforge <command> -h` for the full list.
 
-Classify a directory of images into the D&D creature taxonomy from image
-content alone (requires the `[classify]` extra):
+### The web UI (API + frontend)
 
 ```bash
-aforge classify \
-  --input assets \
-  --output output \
-  --clip-model siglip2 \
-  --confidence-threshold 0.85 \
-  --gpu
+uv sync                              # whole workspace (pipeline + API)
+
+# 1) build the SPA, served by the API at /
+cd aforge_flow_ui && npm install && npm run build && cd ..
+
+# 2) launch the server (sandboxed to --root)
+uv run aforge-api --root .           # open http://127.0.0.1:8000
 ```
 
-Add `--vlm-fallback` to resolve low-confidence cases with Qwen2.5-VL. Or run
-it as a stage of the full pipeline with `--classification`:
+For **hot-reload development**, run the API and the Vite dev server side by side:
 
 ```bash
-aforge process \
-  --input assets --output output \
-  --classification --clip-model siglip2 \
-  --background-removal --media-optimization --gpu
+uv run aforge-api --root .           # terminal 1 → :8000
+cd aforge_flow_ui && npm run dev           # terminal 2 → :5173 (proxies /api → :8000)
 ```
 
-### Full Processing Pipeline
-
-```bash
-aforge process \
-  --input assets \
-  --output output \
-  --background-removal \
-  --media-optimization \
-  --category general \
-  --image-format webp \
-  --video-format webm \
-  --compression balanced \
-  --gpu
-```
-
-### System Information
-
-aforge can automatically select processing strategies based on asset type.
-
-| Category | Description |
-|-----------|-------------|
-| `humanoid` | Humans, elves, dwarves, goblins, orcs, zombies, and humanoid creatures |
-| `creature` | Dragons, beasts, fiends, aberrations, fey, monsters, and non-humanoid entities |
-| `spirit` | Ghosts, spectral creatures, translucent entities, magical manifestations |
-| `item` | Weapons, armor, scrolls, potions, props, treasure, and equipment |
-| `portrait` | Character portraits, NPC artwork, and journal illustrations |
-| `token` | Virtual tabletop tokens and token-ready artwork |
-| `general` | Mixed or unknown content |
+> **GPU / CUDA:** on Linux the default PyPI `torch` wheel already bundles CUDA, so `uv sync` gets GPU support out of the box. To pin a specific CUDA/CPU build, see the commented `[tool.uv.index]` block in [`aforge_flow/pyproject.toml`](aforge_flow/pyproject.toml).
+>
+> **Background removal acceleration (rembg / ONNXRuntime):** rembg runs on
+> `onnxruntime-gpu`. The default `--provider auto` prepends the **TensorRT** EP
+> (FP16, engine cached under `<cache_dir>/trt_engines`) and falls back to CUDA, then
+> CPU — so it works without TensorRT installed and gets faster once it is. For the
+> TensorRT fast path under **WSL2**: install a `tensorrt` build matching your
+> `onnxruntime-gpu` (e.g. ORT 1.27 → TensorRT 10.x), make sure the bundled CUDA libs
+> are on `LD_LIBRARY_PATH` (the `nvidia/*/lib` dirs inside the venv), and verify with
+> `python -c "import onnxruntime as o; print(o.get_available_providers())"`. If a run
+> is unexpectedly slow, the startup log line `session_initialized … active=[…]` tells
+> you which provider actually loaded — if it shows only `CPUExecutionProvider`, fix
+> the environment before anything else.
 
 ---
 
-## Creature Classification
+## Pluggable taxonomy (not just D&D)
 
-Zero-shot classification from **image content only** (file names, folders, and
-metadata are treated as unreliable and never consulted). Two levels per asset:
+The classifier and the caption-rename name hints are driven by a **taxonomy profile** — a small JSON file under [`aforge_flow/src/aforge_flow/core/profiles/`](aforge_flow/src/aforge_flow/core/profiles/).
 
-- **Asset type** — normalized to `Portrait` or `Token`
-- **Creature category** — one of the 14 official D&D types: Aberration, Beast,
-  Celestial, Construct, Dragon, Elemental, Fey, Fiend, Giant, Humanoid,
-  Monstrosity, Ooze, Plant, Undead
+**Why are there D&D monster names in there?** The `dnd` profile ships a curated *name bank* (`mind-flayer`, `beholder`, …). It's fed to the Qwen caption backend as a **soft hint** so generated filenames prefer canonical monster-manual names instead of inventing vague ones (e.g. `mind-flayer` rather than `tentacle-face-guy`). It only biases naming — Qwen may still coin a short name when nothing fits.
 
-Each image is embedded once by a CLIP-family encoder and matched against
-prompt-engineered text prototypes (rich descriptions, not bare labels — see
-`src/aforge_flow/taxonomy.py`). Results are returned in the
-`ProcessorResult` metadata and written as a `<image>.classification.json`
-sidecar:
-
-```json
-{ "asset_type": "Undead", "category": "Undead", "confidence": 0.93, "model": "siglip2", "source": "clip" }
-```
-
-### Encoders (`--clip-model`)
-
-| Model | VRAM | Notes |
-|-------|------|-------|
-| `siglip2` | ~1.5 GB | **Default.** Best zero-shot accuracy for fantasy art |
-| `siglip`  | ~1.3 GB | Strong; use if SigLIP 2 weights are unavailable |
-| `clip`    | ~1.2 GB | OpenAI CLIP ViT-L/14 baseline |
-| `metaclip2` | 2–4 GB | Accuracy headroom when more VRAM is available |
-
-### Confidence workflow
-
-`confidence ≥ threshold` (default `0.85`) and a sufficient top1−top2 margin →
-the CLIP result is auto-accepted (`source: "clip"`). Otherwise, if
-`--vlm-fallback` is set, Qwen2.5-VL classifies that single image
-(`source: "vlm"`). The VLM only ever runs on the uncertain tail, so its cost
-is amortized away.
-
-### Throughput
-
-A one-time batched embedding pre-pass runs before the per-file stage, then all
-embeddings are cached in `.cache/clip_embeddings.sqlite` (float16, ~13 MB for
-6,000 assets). Re-runs — including after tweaking thresholds or prompts — do
-**zero** GPU work. Benchmark with:
+**Switching domains** is one flag — D&D is just the default, not a hard-coded assumption:
 
 ```bash
-python scripts/benchmark_classifier.py throughput -i assets --batch-size 64
-python scripts/benchmark_classifier.py eval --labels val.csv --threshold 0.85
+uv run aforge classify -i assets --taxonomy mundane           # everyday photos
+uv run aforge rename   -i assets -o out --taxonomy call_of_cthulhu
+uv run aforge process  -i assets -o out --classify --taxonomy ./my_domain.json
 ```
+
+Built-ins: `dnd` (default), `mundane` (people/animals/vehicles/landscapes…), `call_of_cthulhu` (Mythos). Add your own by dropping a `<name>.json` (optionally a `<name>.names.json`) in the profiles folder, or point `--taxonomy` at any JSON path.
 
 ---
 
-## Background Removal Models
+## Project docs
 
-### Recommended
-
-| Model | Best For |
-|---------|---------|
-| `birefnet-general` | Humanoids, creatures, spirits, tokens, general-purpose extraction |
-| `birefnet-portrait` | Portraits, faces, hair, headshots |
-| `birefnet-dis` | Items, products, props, isolated objects |
-
-### Additional Models
-
-| Model | Description |
-|---------|---------|
-| `isnet-general-use` | High-quality general-purpose segmentation |
-| `isnet-anime` | Anime and illustrated artwork |
-| `u2net` | Legacy high-quality segmentation |
-| `u2netp` | Lightweight U²-Net |
-| `u2net_human_seg` | Human body segmentation |
-| `u2net_anime` | Anime-focused U²-Net |
-| `u2net_cloth_seg` | Clothing segmentation |
-| `silueta` | Lightweight human silhouette extraction |
-| `salient_object_amodal` | Salient object extraction with occlusion recovery |
-
-### Suggested Configuration
-
-```python
-MODEL_BY_CATEGORY = {
-    AssetCategory.HUMANOID: RembgModel.BIREFNET_GENERAL,
-    AssetCategory.CREATURE: RembgModel.BIREFNET_GENERAL,
-    AssetCategory.SPIRIT: RembgModel.BIREFNET_GENERAL,
-    AssetCategory.ITEM: RembgModel.BIREFNET_DIS,
-    AssetCategory.PORTRAIT: RembgModel.BIREFNET_PORTRAIT,
-    AssetCategory.TOKEN: RembgModel.BIREFNET_GENERAL,
-    AssetCategory.GENERAL: RembgModel.BIREFNET_GENERAL,
-}
-```
+- **[aforge_flow/README.md](aforge_flow/README.md)** — pipeline & `aforge` CLI: every command, all flags, models, classification, taxonomy profiles, examples.
+- **[aforge_flow_api/README.md](aforge_flow_api/README.md)** — FastAPI service: endpoints, SSE, the `--root` sandbox, `AFORGE_FRONTEND_DIST`, curl recipes.
+- **[aforge_flow_ui/README.md](aforge_flow_ui/README.md)** — React/Vite app: dev vs prod, the Vite proxy, i18n and theming.
 
 ---
 
-## Project Structure
-
-```text
-aforge-flow/
-├── assets
-│
-├── output/
-│
-├── scripts/
-│
-├── src/
-│   └── aforge_flow/
-│       ├── processors/
-│       ├── utils/
-│       ├── cli.py
-│       ├── config.py
-│       └── pipeline.py
-│
-├── tests/
-│
-├── environment.yml
-├── pyproject.toml
-└── README.md
-```
-
----
-
-## Performance Notes
-
-### Auto-tuning
-
-Rather than hand-tuning `--workers` and `--gpu/--cpu`, let the tool size them for
-your hardware and workload:
+## Development
 
 ```bash
-aforge recommend --input assets --video-format webm   # inspect + suggest
-aforge optimize-media --input assets --output output --auto-tune   # apply automatically
+uv sync                  # full workspace + dev tools (pytest, ruff, black, mypy)
+uv run pytest            # runs aforge_flow/tests + aforge_flow_api/tests (CPU only)
+uv run ruff check .
+uv run black .
 ```
 
-The recommender accounts for the key constraints:
-
-- **GPU video encoding** uses a single shared NVENC block, so throughput does not
-  scale with more workers — it keeps the worker count low to avoid contention.
-- **CPU video encoding** (VP9/libx264) is already multithreaded, so it favors
-  fewer workers with more threads each over many contending workers.
-- **Memory** — worker counts are capped against available system RAM (and VRAM for
-  the full pipeline) to avoid out-of-memory failures.
-
-### Background Removal
-
-BiRefNet models offer the highest extraction quality but require significantly more memory than ISNet or U²-Net.
-
-For large images:
-
-- Resize extremely large images before processing
-- Use `--auto-tune` (or `aforge recommend`) to size workers to available memory
+**uv is the only supported path.** Non-Python system deps are not an env-manager
+concern: install `ffmpeg` (media optimization) and the CUDA driver / TensorRT
+runtime via your OS — under WSL2 that's `apt` plus the matching `tensorrt` wheel.
 
 ---
 
 ## License
-MIT License
 
-Copyright (c) 2026 Bruno Fonseca
+MIT License — Copyright (c) 2026 Bruno Fonseca. Full text in [LICENSE](LICENSE); reproduced below.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
 

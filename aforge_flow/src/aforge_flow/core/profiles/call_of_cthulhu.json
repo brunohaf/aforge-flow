@@ -1,0 +1,157 @@
+{
+  "name": "call_of_cthulhu",
+  "description": "Call of Cthulhu / Lovecraftian Mythos taxonomy for cosmic-horror artwork.",
+  "caption_instruction": "You are naming Lovecraftian cosmic-horror (Call of Cthulhu) artwork for a tabletop library. Identify the single main subject and give it a short, evocative 2-4 word name drawn from the Cthulhu Mythos when it fits (for example: deep-one-hybrid, robed-cultist, shoggoth, mi-go, nightgaunt). Prefer Mythos creatures and 1920s investigators over generic descriptions. Reply with only the name, lowercase, hyphen-separated, no punctuation or articles.",
+  "caption_prefix": "a dark cosmic-horror illustration of",
+  "asset_type_normalization": {
+    "battle_token": "Token",
+    "portrait": "Portrait",
+    "character_illustration": "Portrait",
+    "creature_illustration": "Portrait"
+  },
+  "asset_types": [
+    {
+      "label": "battle_token",
+      "prompts": [
+        "a top-down circular battle map token for a tabletop role-playing game",
+        "a round VTT token seen from directly above, with a circular border ring",
+        "a top-down overhead view of a miniature on a circular base",
+        "a virtual tabletop creature token, centered, viewed from the top"
+      ]
+    },
+    {
+      "label": "portrait",
+      "prompts": [
+        "a fantasy character portrait showing the head and shoulders",
+        "a close-up bust portrait of a fantasy character facing the viewer",
+        "a framed headshot illustration of a single fantasy character"
+      ]
+    },
+    {
+      "label": "character_illustration",
+      "prompts": [
+        "a full-body fantasy character illustration in a dynamic pose",
+        "a detailed digital painting of a standing fantasy adventurer",
+        "concept art of a fantasy character shown from head to toe"
+      ]
+    },
+    {
+      "label": "creature_illustration",
+      "prompts": [
+        "a full-body illustration of a fantasy monster or creature",
+        "a detailed digital painting of a fantasy beast in a natural pose",
+        "concept art of a large fantasy creature shown in full"
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "label": "Investigator",
+      "prompts": [
+        "a 1920s human investigator or detective in period clothing",
+        "an ordinary person of the 1920s, such as a professor, reporter, or doctor"
+      ]
+    },
+    {
+      "label": "Cultist",
+      "prompts": [
+        "a hooded robed cultist performing a dark ritual",
+        "a sinister human cultist with occult robes and symbols"
+      ]
+    },
+    {
+      "label": "DeepOne",
+      "prompts": [
+        "a deep one, a fish-frog humanoid with scales, gills, and bulging eyes",
+        "an amphibious aquatic humanoid hybrid from the sea"
+      ]
+    },
+    {
+      "label": "Ghoul",
+      "prompts": [
+        "a ghoul, a hunched corpse-eating humanoid with canine features and claws",
+        "a pale subterranean scavenger with rubbery flesh and hooves"
+      ]
+    },
+    {
+      "label": "MiGo",
+      "prompts": [
+        "a mi-go, a winged fungoid crustacean alien with a pinkish segmented body",
+        "a fungus-from-Yuggoth creature with membranous wings and many limbs"
+      ]
+    },
+    {
+      "label": "ElderThing",
+      "prompts": [
+        "an elder thing, a barrel-shaped being with starfish head and wings",
+        "an ancient radial alien with tentacled appendages"
+      ]
+    },
+    {
+      "label": "Shoggoth",
+      "prompts": [
+        "a shoggoth, a vast amorphous mass of black protoplasm covered in eyes",
+        "an enormous shapeless bubbling blob forming temporary eyes and mouths"
+      ]
+    },
+    {
+      "label": "Byakhee",
+      "prompts": [
+        "a byakhee, a gaunt winged interstellar creature, part bird and insect",
+        "a leathery winged hound-like flying horror"
+      ]
+    },
+    {
+      "label": "Nightgaunt",
+      "prompts": [
+        "a nightgaunt, a faceless black winged humanoid with horns and a barbed tail",
+        "a smooth faceless flying horror with bat wings"
+      ]
+    },
+    {
+      "label": "GreatOldOne",
+      "prompts": [
+        "a colossal eldritch deity such as Cthulhu, with tentacles and vast wings",
+        "a god-like cosmic horror of immense scale and alien anatomy"
+      ]
+    },
+    {
+      "label": "Sorcerer",
+      "prompts": [
+        "a Mythos sorcerer or wizard wielding forbidden eldritch magic",
+        "a human spellcaster channeling sickly otherworldly energy"
+      ]
+    },
+    {
+      "label": "Tome",
+      "prompts": [
+        "an ancient forbidden tome or occult artifact bound in strange materials",
+        "a grimoire, idol, or ritual relic radiating dread"
+      ]
+    }
+  ],
+  "name_bank": {
+    "GreatOldOne": [
+      "cthulhu",
+      "hastur",
+      "dagon",
+      "yog-sothoth",
+      "nyarlathotep"
+    ],
+    "DeepOne": [
+      "deep-one",
+      "deep-one-hybrid",
+      "father-dagon"
+    ],
+    "MiGo": [
+      "mi-go",
+      "fungi-from-yuggoth"
+    ],
+    "Nightgaunt": [
+      "nightgaunt"
+    ],
+    "Shoggoth": [
+      "shoggoth"
+    ]
+  }
+}

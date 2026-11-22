@@ -1,0 +1,161 @@
+{
+  "name": "dnd",
+  "description": "Dungeons & Dragons creature taxonomy (14 official creature types) and VTT asset formats. Default profile.",
+  "caption_instruction": "You are naming fantasy tabletop RPG (Dungeons & Dragons) artwork for a virtual tabletop library. Identify the single main subject and give it a specific, evocative 2-4 word name. Prefer a recognizable creature, monster, or character archetype (for example: mind-flayer, frost-giant-jarl, lich-queen, beholder) over generic descriptions like 'armored fighter' or 'robed figure'. Use real-world labels only if nothing fantastical fits. Reply with only the name, lowercase, hyphen-separated, no punctuation or articles.",
+  "caption_prefix": "a detailed fantasy character or creature",
+  "asset_type_normalization": {
+    "battle_token": "Token",
+    "portrait": "Portrait",
+    "character_illustration": "Portrait",
+    "creature_illustration": "Portrait"
+  },
+  "asset_types": [
+    {
+      "label": "battle_token",
+      "prompts": [
+        "a top-down circular battle map token for a tabletop role-playing game",
+        "a round VTT token seen from directly above, with a circular border ring",
+        "a top-down overhead view of a miniature on a circular base",
+        "a virtual tabletop creature token, centered, viewed from the top"
+      ]
+    },
+    {
+      "label": "portrait",
+      "prompts": [
+        "a fantasy character portrait showing the head and shoulders",
+        "a close-up bust portrait of a fantasy character facing the viewer",
+        "a framed headshot illustration of a single fantasy character"
+      ]
+    },
+    {
+      "label": "character_illustration",
+      "prompts": [
+        "a full-body fantasy character illustration in a dynamic pose",
+        "a detailed digital painting of a standing fantasy adventurer",
+        "concept art of a fantasy character shown from head to toe"
+      ]
+    },
+    {
+      "label": "creature_illustration",
+      "prompts": [
+        "a full-body illustration of a fantasy monster or creature",
+        "a detailed digital painting of a fantasy beast in a natural pose",
+        "concept art of a large fantasy creature shown in full"
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "label": "Aberration",
+      "prompts": [
+        "an alien aberration with tentacles, many eyes, and an unnatural otherworldly anatomy",
+        "a grotesque eldritch creature with a mass of tentacles and asymmetric mouths",
+        "a mind flayer style aberration, a beholder, or a writhing cosmic horror"
+      ]
+    },
+    {
+      "label": "Beast",
+      "prompts": [
+        "a natural animal such as a wolf, bear, giant spider, or eagle in a fantasy setting",
+        "an ordinary mundane animal or wild beast, biologically plausible, not magical",
+        "a realistic creature like a big cat, boar, snake, or bird of prey"
+      ]
+    },
+    {
+      "label": "Celestial",
+      "prompts": [
+        "a radiant celestial being such as an angel with feathered wings and a glowing halo",
+        "a divine holy creature wreathed in golden light from the upper planes",
+        "a benevolent heavenly messenger glowing with sacred light"
+      ]
+    },
+    {
+      "label": "Construct",
+      "prompts": [
+        "an artificial construct such as an animated armor, golem, or clockwork automaton",
+        "a non-living creature built from stone, metal, clay, or gears, magically animated",
+        "a mechanical robot-like fantasy automaton with no organic flesh"
+      ]
+    },
+    {
+      "label": "Dragon",
+      "prompts": [
+        "a large draconic fantasy creature with scales, leathery wings, and reptilian features",
+        "a dragon or wyvern with a long neck, horns, claws, and a scaled serpentine body",
+        "a winged fire-breathing reptilian dragon perched or in flight"
+      ]
+    },
+    {
+      "label": "Elemental",
+      "prompts": [
+        "an elemental creature made of living fire, water, earth, or swirling air",
+        "a being composed entirely of one element, such as a fire elemental or earth elemental",
+        "a humanoid-shaped mass of flame, stone, water, or wind with no solid flesh"
+      ]
+    },
+    {
+      "label": "Fey",
+      "prompts": [
+        "a whimsical fey creature such as a fairy, pixie, dryad, or satyr with insect or plant features",
+        "a delicate magical sprite from the feywild with butterfly wings and a nature theme",
+        "an enchanting woodland fey being tied to nature and the seasons"
+      ]
+    },
+    {
+      "label": "Fiend",
+      "prompts": [
+        "a demonic or infernal fantasy creature from the lower planes, with horns, fangs, and fire",
+        "a devil or demon with red skin, bat wings, horns, and a menacing hellish aura",
+        "an evil fiend wreathed in brimstone and flame from the abyss or the nine hells"
+      ]
+    },
+    {
+      "label": "Giant",
+      "prompts": [
+        "a giant humanoid of enormous size such as an ogre, troll, hill giant, or frost giant",
+        "a towering brutish giant dwarfing normal people, wielding a huge club or boulder",
+        "a massive humanoid colossus, crude and oversized"
+      ]
+    },
+    {
+      "label": "Humanoid",
+      "prompts": [
+        "a humanoid person of a fantasy ancestry such as a human, elf, dwarf, orc, or goblin",
+        "a person-sized fantasy character: an adventurer, soldier, mage, rogue, or villager",
+        "a bipedal humanoid with two arms and two legs wearing armor or clothing"
+      ]
+    },
+    {
+      "label": "Monstrosity",
+      "prompts": [
+        "a monstrous hybrid creature such as a manticore, griffon, chimera, owlbear, or hydra",
+        "an unnatural monster combining features of several animals into one fearsome beast",
+        "a fantastical predatory monster that is neither a normal animal nor a dragon"
+      ]
+    },
+    {
+      "label": "Ooze",
+      "prompts": [
+        "an amorphous gelatinous ooze, slime, or jelly with no fixed shape",
+        "a blob of translucent acidic slime oozing across the ground",
+        "a shapeless creature made of viscous goo, such as a gelatinous cube or black pudding"
+      ]
+    },
+    {
+      "label": "Plant",
+      "prompts": [
+        "a plant creature such as an animated tree, walking shrub, or carnivorous vine monster",
+        "a living plant monster covered in bark, leaves, vines, fungi, or flowers",
+        "a treant, shambling mound, or vegetal creature rooted in nature"
+      ]
+    },
+    {
+      "label": "Undead",
+      "prompts": [
+        "a fantasy undead creature animated by necromancy, such as a skeleton, zombie, or lich",
+        "a rotting corpse, ghostly spirit, vampire, or skeletal warrior risen from death",
+        "a decaying or spectral undead being with exposed bone, pale flesh, or a ghostly form"
+      ]
+    }
+  ]
+}

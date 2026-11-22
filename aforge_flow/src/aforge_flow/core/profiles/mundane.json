@@ -1,0 +1,133 @@
+{
+  "name": "mundane",
+  "description": "Everyday, real-world subjects for ordinary (non-fantasy) image libraries.",
+  "caption_instruction": "You are naming an everyday photograph or illustration. Identify the single main subject and give it a short, plain, descriptive 2-4 word name (for example: red-sports-car, golden-retriever-puppy, mountain-lake-sunset). Be concrete and literal; do not invent fantasy names. Reply with only the name, lowercase, hyphen-separated, no punctuation or articles.",
+  "caption_prefix": "a clear photograph of",
+  "asset_type_normalization": {
+    "battle_token": "Token",
+    "portrait": "Portrait",
+    "character_illustration": "Portrait",
+    "creature_illustration": "Portrait"
+  },
+  "asset_types": [
+    {
+      "label": "battle_token",
+      "prompts": [
+        "a top-down circular battle map token for a tabletop role-playing game",
+        "a round VTT token seen from directly above, with a circular border ring",
+        "a top-down overhead view of a miniature on a circular base",
+        "a virtual tabletop creature token, centered, viewed from the top"
+      ]
+    },
+    {
+      "label": "portrait",
+      "prompts": [
+        "a fantasy character portrait showing the head and shoulders",
+        "a close-up bust portrait of a fantasy character facing the viewer",
+        "a framed headshot illustration of a single fantasy character"
+      ]
+    },
+    {
+      "label": "character_illustration",
+      "prompts": [
+        "a full-body fantasy character illustration in a dynamic pose",
+        "a detailed digital painting of a standing fantasy adventurer",
+        "concept art of a fantasy character shown from head to toe"
+      ]
+    },
+    {
+      "label": "creature_illustration",
+      "prompts": [
+        "a full-body illustration of a fantasy monster or creature",
+        "a detailed digital painting of a fantasy beast in a natural pose",
+        "concept art of a large fantasy creature shown in full"
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "label": "Person",
+      "prompts": [
+        "a photograph of a person, such as a man, woman, or child",
+        "a portrait of a human being in everyday clothing"
+      ]
+    },
+    {
+      "label": "Animal",
+      "prompts": [
+        "a photograph of an ordinary animal such as a dog, cat, horse, or bird",
+        "a real-world pet or wild animal in a natural setting"
+      ]
+    },
+    {
+      "label": "Plant",
+      "prompts": [
+        "a photograph of a plant, flower, tree, or houseplant",
+        "green foliage, a potted plant, or a blooming flower"
+      ]
+    },
+    {
+      "label": "Food",
+      "prompts": [
+        "a photograph of food or a prepared dish on a plate",
+        "a meal, fruit, dessert, or drink presented appetizingly"
+      ]
+    },
+    {
+      "label": "Vehicle",
+      "prompts": [
+        "a photograph of a vehicle such as a car, truck, motorcycle, or bicycle",
+        "an automobile, bus, train, boat, or aircraft"
+      ]
+    },
+    {
+      "label": "Building",
+      "prompts": [
+        "a photograph of a building, house, or architectural structure",
+        "the exterior or interior of a home, office, or public building"
+      ]
+    },
+    {
+      "label": "Landscape",
+      "prompts": [
+        "a scenic landscape photograph of nature such as mountains, forest, or beach",
+        "an outdoor scene of sky, water, fields, or wilderness"
+      ]
+    },
+    {
+      "label": "Furniture",
+      "prompts": [
+        "a photograph of a piece of furniture such as a chair, table, sofa, or bed",
+        "an item of household or office furniture"
+      ]
+    },
+    {
+      "label": "Tool",
+      "prompts": [
+        "a photograph of a hand tool or piece of equipment such as a hammer or drill",
+        "a mechanical tool, instrument, or piece of hardware"
+      ]
+    },
+    {
+      "label": "Electronics",
+      "prompts": [
+        "a photograph of an electronic device such as a phone, laptop, or camera",
+        "a consumer gadget, computer, or appliance"
+      ]
+    },
+    {
+      "label": "Clothing",
+      "prompts": [
+        "a photograph of clothing or an accessory such as a shirt, shoe, or bag",
+        "an item of apparel, footwear, or fashion accessory"
+      ]
+    },
+    {
+      "label": "Artwork",
+      "prompts": [
+        "a photograph of an artwork such as a painting, drawing, or sculpture",
+        "a piece of fine art, an abstract illustration, or a decorative object"
+      ]
+    }
+  ]
+}

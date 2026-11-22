@@ -107,3 +107,12 @@ assets/
 
 # Conda
 conda-lock.yml
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# uv — keep the lockfile and the Python pin tracked
+!uv.lock
+!.python-version

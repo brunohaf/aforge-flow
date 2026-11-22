@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aforge-flow-api"
+version = "0.1.0"
+description = "FastAPI web service for the AForge Flow pipeline — browse/upload assets, run background removal and media optimization, stream progress, download results"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "AForge Flow Contributors" }]
+keywords = ["fastapi", "web-ui", "image-processing", "vtt", "pipeline"]
+
+dependencies = [
+    "aforge-flow",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",
+    "click>=8.1.0",
+]
+
+[project.scripts]
+aforge-api = "aforge_flow_api.cli:main"
+
+[tool.uv.sources]
+aforge-flow = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]

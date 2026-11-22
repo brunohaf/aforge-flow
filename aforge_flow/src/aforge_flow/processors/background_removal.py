@@ -1,0 +1,993 @@
+"""Background removal processor using rembg."""
+
+from __future__ import annotations
+
+import gc
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+
+import numpy as np
+import structlog
+from PIL import Image
+
+from aforge_flow.core.config import MODEL_BY_CATEGORY, AssetCategory, Config
+from aforge_flow.processors.base import BaseProcessor, ProcessorResult
+from aforge_flow.utils import is_image, validate_file
+
+if TYPE_CHECKING:
+    from rembg import BaseSession
+
+logger = structlog.get_logger(__name__)
+
+
+def _bootstrap_windows_cuda_dlls() -> None:
+    """Make the CUDA runtime DLLs discoverable to onnxruntime-gpu on Windows.
+
+    onnxruntime-gpu's CUDA EP links against the CUDA runtime (``cublasLt64_13.dll``
+    etc.). On Windows those DLLs are not on the default search path, so without
+    this the CUDA provider fails to load and ORT *silently* falls back to CPU
+    (~40x slower). The cu130 PyTorch build bundles a matching CUDA 13 runtime in
+    ``torch/lib``; importing torch and registering that dir lets ORT find them.
+
+    Runs at import (before any ``onnxruntime`` import) and is a best-effort no-op
+    off Windows, or when torch / the DLLs are absent (e.g. CPU-only installs).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import torch
+
+        torch_lib = Path(torch.__file__).parent / "lib"
+        if torch_lib.is_dir():
+            os.add_dll_directory(str(torch_lib))
+            logger.debug("windows_cuda_dll_bootstrap", dll_dir=str(torch_lib))
+    except Exception as exc:  # pragma: no cover - platform/deploy specific
+        logger.debug("windows_cuda_dll_bootstrap_skipped", reason=str(exc))
+
+
+_bootstrap_windows_cuda_dlls()
+
+MAX_INFERENCE_DIM: int = 1024
+"""Cap used only by the optional alpha-matting pass to bound its RAM use.
+
+Note: it does NOT reduce segmentation VRAM — BiRefNet/BRIA hard-code a
+1024x1024 input inside rembg, so downscaling the source before inference is
+upscaled straight back and saves nothing."""
+
+GPU_PROVIDERS = frozenset({"CUDAExecutionProvider", "TensorrtExecutionProvider"})
+"""ONNXRuntime execution providers that indicate a session is GPU-accelerated."""
+
+
+class GpuSessionUnavailable(RuntimeError):
+    """Raised when a GPU session was requested but ORT activated CPU only.
+
+    Signals *transient* VRAM contention: the CUDA/TensorRT EP exists on this
+    machine but ORT could not activate it for this build (VRAM exhausted by
+    this or another process). It is distinct from a machine with no GPU EP at
+    all — that case disables :attr:`BackgroundRemovalProcessor.use_gpu` once
+    instead of raising. The retry loop treats this like an OOM so the session
+    is flushed and rebuilt on the next file, rather than being silently pinned
+    to CPU for the remainder of the batch (which turns a 20-min GPU run into a
+    9-hour CPU one)."""
+
+
+OOM_MARKERS = frozenset(
+    {
+        "out of memory",
+        "failed to allocate",
+        "cuda failure",
+        "cudamalloc",
+        "cudnn_status",
+        "cudamemcpyasync",
+        "cudastreamsynchronize",
+        # ORT's bounded BFC arena reports exhaustion as "bfc_arena.cc ... Available
+        # memory of X is smaller than requested bytes of Y" (no "out of memory"
+        # string), e.g. when gpu_mem_limit is set or VRAM is genuinely tight.
+        "bfc_arena",
+        "smaller than requested",
+    }
+)
+"""Lowercased substrings that identify GPU OOM / corrupted-CUDA-context errors
+in ONNX/CUDA tracebacks (e.g. ``CUDA failure 2: out of memory``,
+``CUDNN_STATUS_INTERNAL_ERROR``). Matched case-insensitively via
+:func:`_is_oom_error`."""
+
+
+def _is_oom_error(exc: Exception) -> bool:
+    """Return ``True`` when *exc* looks like a GPU OOM or corrupted-context error."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in OOM_MARKERS)
+
+
+def resize_for_inference(
+    image: Image.Image,
+    max_dim: int = MAX_INFERENCE_DIM,
+) -> tuple[Image.Image, tuple[int, int]]:
+    """Downscale *image* so its longest side is at most *max_dim*.
+
+    If the image already fits, it is returned unchanged.
+
+    Args:
+        image: Source image in any PIL mode.
+        max_dim: Maximum allowed size for the longest side, in pixels.
+
+    Returns:
+        A ``(inference_image, original_size)`` tuple where *original_size*
+        is ``(width, height)`` before any resizing.
+    """
+    original_size: tuple[int, int] = image.size
+    longest = max(original_size)
+
+    if longest <= max_dim:
+        return image, original_size
+
+    scale = max_dim / longest
+    new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
+
+    logger.debug("resized_for_inference", original=original_size, inference=new_size)
+    return image.resize(new_size, Image.LANCZOS), original_size
+
+
+def flatten_to_matte(
+    image: Image.Image,
+    color: tuple[int, int, int] = (255, 255, 255),
+) -> Image.Image:
+    """Composite a transparent image onto a solid *color* matte, returning RGB.
+
+    Many source assets are RGBA with a *semi-transparent* painted wash (e.g. a
+    watercolor splash) over an otherwise transparent background. rembg feeds the
+    model ``img.convert("RGB")``, which **discards** the alpha channel instead of
+    compositing it — so the wash's stored RGB is handed to the segmenter at full
+    strength and kept as foreground. Matting onto white first blends those
+    semi-transparent pixels toward the background colour, so the model correctly
+    drops them; opaque (already-RGB) images are returned unchanged apart from the
+    mode coercion.
+
+    Args:
+        image: Source image in any PIL mode.
+        color: RGB matte colour. White ``(255, 255, 255)`` suits art-on-paper
+            assets and is the segmenter's expected background.
+
+    Returns:
+        An RGB image with any transparency composited onto *color*.
+    """
+    has_alpha = image.mode in ("RGBA", "LA") or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    if not has_alpha:
+        return image.convert("RGB")
+
+    rgba = image.convert("RGBA")
+    bg = Image.new("RGBA", rgba.size, (*color, 255))
+    return Image.alpha_composite(bg, rgba).convert("RGB")
+
+
+def composite_mask(original: Image.Image, mask: Image.Image) -> Image.Image:
+    """Apply *mask*'s alpha channel onto full-resolution *original*.
+
+    When the segmentation was run on a downscaled copy, *mask* will be
+    smaller than *original*.  This function upscales the alpha channel back
+    with ``LANCZOS`` before compositing so output sharpness is bounded by
+    the original image, not the inference resolution.
+
+    Args:
+        original: Full-resolution source image (any mode).
+        mask: RGBA image produced by rembg, possibly at a reduced size.
+
+    Returns:
+        Full-resolution RGBA image with background removed.
+    """
+    if mask.mode != "RGBA":
+        mask = mask.convert("RGBA")
+
+    if mask.size != original.size:
+        mask = mask.resize(original.size, Image.LANCZOS)
+
+    r, g, b, _ = original.convert("RGBA").split()
+    *_, alpha = mask.split()
+    return Image.merge("RGBA", (r, g, b, alpha))
+
+class BackgroundRemovalProcessor(BaseProcessor):
+    """Remove image backgrounds using `rembg` and an ONNX segmentation model.
+
+    GPU memory is managed defensively:
+
+    * All inference calls are serialised through a class-level lock so that
+      multiple processor instances (e.g. from a thread pool) never compete
+      for VRAM simultaneously.
+    * The CUDA execution provider is created with a memory-frugal config
+      (heuristic cuDNN algo search, request-sized arena) so a single 1024²
+      BiRefNet/BRIA inference fits on an 8 GB laptop GPU.
+    * On OOM the corrupted session is destroyed and rebuilt; if VRAM still
+      will not fit the image, it falls back to a cached CPU session
+      (``config.cpu_fallback_on_oom``) so the batch never cascade-fails.
+      Output quality is identical on CPU — only slower.
+
+    Args:
+        config: Global aforge_flow configuration.
+        category: Optional category override for model selection.  Falls back
+            to ``config.rembg_category`` when omitted.
+    """
+
+    _gpu_lock: threading.Lock = threading.Lock()
+    """Serialises GPU calls across all instances to prevent concurrent VRAM exhaustion."""
+
+    def __init__(self, config: Config, category: Optional[AssetCategory] = None) -> None:
+        super().__init__(config)
+
+        self.category = category or config.rembg_category
+        self.model_name: str = (
+            MODEL_BY_CATEGORY[self.category].value
+            if self.category in MODEL_BY_CATEGORY
+            else config.rembg_model.value
+        )
+        self.use_gpu: bool = config.use_gpu
+
+        # Lazily-built CPU session, reused as the OOM fallback for every image.
+        self._cpu_session: Optional[BaseSession] = None
+
+        logger.info("initializing_processor", model=self.model_name, category=self.category)
+        # A transient VRAM shortage at startup must not abort the whole run:
+        # defer the session to the first file, where the retry loop can rebuild
+        # it (and fall back per-image if VRAM never frees). A machine with no
+        # GPU EP does not raise here — _create_session disables use_gpu instead.
+        try:
+            self.session: Optional[BaseSession] = self._create_session()
+        except GpuSessionUnavailable:
+            logger.warning("initial_gpu_session_deferred", model=self.model_name)
+            self.session = None
+
+    def _build_providers(self, force_cpu: bool) -> list:
+        """Return an ONNXRuntime ``providers`` list for :meth:`_create_session`.
+
+        Providers are tried in order, so the list encodes the acceleration
+        fallback chain. With ``config.rembg_provider == "auto"`` (the default) the
+        TensorRT EP is tried first — it compiles a single FP16 engine for BRIA's
+        static 1024² input and caches it — then CUDA, then CPU. ORT **silently
+        skips** the TensorRT EP if it is not installed, so ``auto`` is safe without
+        TensorRT and degrades to the plain CUDA path.
+
+        On CUDA the arena uses ``kSameAsRequested`` (frugal, releases between runs):
+        under WSL2 this is the only strategy that survives a full batch — the faster
+        growable default corrupts the CUDA context after ~1 inference (see the arena
+        note below). ``config.cudnn_algo_exhaustive`` switches the conv search to
+        EXHAUSTIVE; ``config.gpu_mem_limit_gb`` optionally caps the arena.
+        """
+        provider = self.config.rembg_provider
+
+        if force_cpu or not self.use_gpu or provider == "cpu":
+            return ["CPUExecutionProvider"]
+
+        providers: list = []
+
+        if provider in ("auto", "tensorrt"):
+            trt_cache = self.config.cache_dir / "trt_engines"
+            trt_cache.mkdir(parents=True, exist_ok=True)
+            providers.append(
+                (
+                    "TensorrtExecutionProvider",
+                    {
+                        "trt_fp16_enable": self.config.trt_fp16,
+                        "trt_engine_cache_enable": self.config.trt_engine_cache,
+                        "trt_engine_cache_path": str(trt_cache),
+                        "trt_timing_cache_enable": True,
+                    },
+                )
+            )
+
+        # Use ORT's fast growable arena (kNextPowerOfTwo default) but CAP it. BRIA
+        # at 1024² has a ~6.5 GB working set; uncapped, the arena grabs all VRAM
+        # and starves cuBLAS of workspace on the 2nd inference (CUBLAS
+        # INTERNAL_ERROR → cascade OOM). Capping the arena leaves headroom for the
+        # cuBLAS/cuDNN workspaces, giving ~0.8 s/image (vs ~14 s for the frugal
+        # kSameAsRequested arena that releases between runs). The cap must be large
+        # enough for the working set yet leave ~1 GB free: on an 8 GB card ~7 GB is
+        # the sweet spot (6.5 GB fails to fit, uncapped starves cuBLAS).
+        cuda_opts: dict = {}
+        if self.config.cudnn_algo_exhaustive:
+            cuda_opts["cudnn_conv_algo_search"] = "EXHAUSTIVE"
+
+        limit = self.config.gpu_mem_limit_gb * 1024**3
+        if limit <= 0:
+            limit = self._auto_gpu_mem_limit()
+        if limit > 0:
+            cuda_opts["gpu_mem_limit"] = int(limit)
+            logger.info("cuda_arena_cap_gb", limit_gb=round(limit / 1024**3, 2))
+
+        providers.append(("CUDAExecutionProvider", cuda_opts))
+        providers.append("CPUExecutionProvider")
+        return providers
+
+    @staticmethod
+    def _auto_gpu_mem_limit() -> int:
+        """Default CUDA arena cap in bytes: free VRAM minus ~1 GB of headroom.
+
+        The arena must fit BRIA's working set yet leave room for the cuBLAS/cuDNN
+        workspaces (see :meth:`_build_providers`). Reserving ~1 GB below free VRAM
+        satisfies both on an 8 GB card (~7 GB cap). Best-effort: returns ``0`` (no
+        cap) when torch/CUDA is unavailable or free VRAM is too low to reserve
+        from, so the provider is built without an explicit cap.
+        """
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                free, _ = torch.cuda.mem_get_info()
+                headroom = 1024**3  # leave ~1 GiB for cuBLAS/cuDNN workspace
+                if free > 2 * headroom:
+                    return free - headroom
+        except Exception:
+            return 0
+        return 0
+
+    def _create_session(self, force_cpu: bool = False) -> BaseSession:
+        """Initialise an rembg inference session for :attr:`model_name`.
+
+        Args:
+            force_cpu: Build a CPU-only session, ignoring GPU configuration.
+
+        Returns:
+            A ready-to-use rembg ``BaseSession``.
+
+        Raises:
+            Exception: Propagates any error raised by ``rembg.new_session``
+                after logging it.
+        """
+        import onnxruntime as ort
+        from rembg import new_session
+
+        providers = self._build_providers(force_cpu)
+
+        try:
+            session = new_session(self.model_name, providers=providers)
+        except Exception:
+            logger.exception("session_initialization_failed", model=self.model_name)
+            raise
+
+        # Log the providers ORT *actually* activated (not just what we requested):
+        # this is the only reliable way to catch a silent CPU fallback (e.g. a CPU
+        # ``onnxruntime`` shadowing ``onnxruntime-gpu``) or a TensorRT EP that failed
+        # to load.
+        active = session.inner_session.get_providers()
+        logger.info(
+            "session_initialized",
+            model=self.model_name,
+            requested=providers,
+            active=active,
+        )
+        if not force_cpu and self.use_gpu and not (GPU_PROVIDERS & set(active)):
+            available = set(ort.get_available_providers())
+            if GPU_PROVIDERS & available:
+                # A GPU EP is installed but ORT fell back to CPU for *this*
+                # build — VRAM is exhausted right now. Reject the CPU session so
+                # the retry loop flushes and rebuilds a GPU session on the next
+                # file, instead of pinning the whole batch to CPU.
+                logger.warning(
+                    "gpu_requested_but_inactive",
+                    active=active,
+                    available=sorted(available),
+                )
+                raise GpuSessionUnavailable(
+                    f"GPU requested but ORT activated {active}; VRAM likely exhausted"
+                )
+            # No GPU EP on this machine at all (e.g. a CPU-only onnxruntime
+            # shadowing onnxruntime-gpu). This never changes within the process,
+            # so disable GPU once and keep the CPU session rather than raising on
+            # every file.
+            logger.warning(
+                "gpu_unavailable_using_cpu",
+                active=active,
+                available=sorted(available),
+            )
+            self.use_gpu = False
+
+        return session
+
+    def _get_cpu_session(self) -> BaseSession:
+        """Return a cached CPU-only session, building it on first use."""
+        if self._cpu_session is None:
+            logger.info("creating_cpu_fallback_session", model=self.model_name)
+            self._cpu_session = self._create_session(force_cpu=True)
+        return self._cpu_session
+
+    def _flush_gpu_memory(self) -> None:
+        """Destroy the GPU session to free its ONNXRuntime CUDA arena.
+
+        ONNXRuntime owns its CUDA allocations independently of PyTorch, so
+        ``torch.cuda.empty_cache()`` cannot free them — only dropping the
+        ``InferenceSession`` and collecting it does. We therefore release
+        :attr:`session` here; callers must rebuild it before the next GPU run.
+        ``torch`` is flushed too as a best-effort for any shared context.
+        """
+        self.session = None  # type: ignore[assignment]
+        gc.collect()
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except ImportError:
+            pass
+
+        gc.collect()
+
+    def warmup(self) -> None:
+        """Run one throwaway inference to trigger engine build / kernel autotune.
+
+        With the TensorRT EP this forces the (one-time, minutes-long) engine build
+        to happen up front — with a clear log line and any failure surfaced
+        immediately — instead of stalling the first real image inside the batch
+        loop. It is a cheap no-op on CPU/CUDA beyond a single inference.
+        """
+        try:
+            from rembg import remove as rembg_remove
+        except ImportError:
+            return
+
+        logger.info("warmup_start", model=self.model_name)
+        dummy = Image.new("RGB", (1024, 1024), (0, 0, 0))
+        start = time.perf_counter()
+        try:
+            with self._gpu_lock:
+                if self.session is None:
+                    self.session = self._create_session()
+                rembg_remove(dummy, session=self.session)
+        except Exception as exc:
+            logger.warning("warmup_failed", reason=str(exc))
+            return
+        logger.info("warmup_done", seconds=round(time.perf_counter() - start, 2))
+
+    def can_process(self, input_path: Path) -> bool:
+        """Return ``True`` when *input_path* is a supported image format.
+
+        Args:
+            input_path: Candidate file path.
+        """
+        return is_image(input_path)
+
+
+    def _segment(self, source: Image.Image, remove_fn, session: BaseSession) -> Image.Image:
+        """Run rembg segmentation and refine the mask onto the full-res *source*.
+
+        rembg already segments at the model's fixed 1024² and LANCZOS-upscales
+        the mask back to *source* size, so no manual downscaling is needed.
+        """
+        mask = remove_fn(source, session=session)
+
+        if mask.size != source.size:
+            mask = composite_mask(source, mask)
+
+        return self._refine_edges(source, mask)
+
+    def _remove_with_retry(
+        self,
+        input_path: Path,
+        source: Image.Image,
+        output_path: Path,
+        remove_fn,
+        max_retries: int = 2,
+    ) -> ProcessorResult:
+        """Run background removal with OOM recovery, then edge refinement.
+
+        Because BiRefNet/BRIA run at a fixed 1024² inside rembg, shrinking the
+        input cannot relieve VRAM pressure. Instead, on an OOM we destroy the
+        (now cuDNN-corrupted) GPU session and rebuild a fresh one before
+        retrying. If the GPU still cannot fit the image and
+        ``config.cpu_fallback_on_oom`` is set, the image is processed on a
+        cached CPU session — identical quality, just slower — so a single
+        oversized image never cascade-fails the whole batch.
+
+        Args:
+            input_path: Original file path (used only for result metadata).
+            source: Full-resolution source image.
+            output_path: Destination path for the PNG output.
+            remove_fn: Callable with the same signature as ``rembg.remove``.
+            max_retries: GPU attempts (with session rebuild) before CPU fallback.
+
+        Returns:
+            A :class:`ProcessorResult` describing the outcome.
+        """
+        last_error: str = ""
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                with self._gpu_lock:
+                    if self.session is None:
+                        self.session = self._create_session()
+                    mask = self._segment(source, remove_fn, self.session)
+                return self._save(input_path, mask, output_path)
+
+            except Exception as exc:
+                last_error = str(exc)
+                # A rebuilt-but-CPU-only session (GpuSessionUnavailable) is
+                # transient VRAM contention, same class of problem as an OOM:
+                # flush and retry so a fresh GPU session is built next attempt.
+                recoverable = _is_oom_error(exc) or isinstance(exc, GpuSessionUnavailable)
+
+                # Detach the traceback before flushing. The traceback references
+                # the _segment frame, whose ``session`` local IS the corrupted GPU
+                # session; while that chain is alive, _flush_gpu_memory's
+                # gc.collect() cannot free the session's CUDA arena, so the rebuild
+                # allocates a *second* arena on top and re-OOMs (the cascade we saw
+                # pin the whole batch to CPU). Keep only the message string.
+                exc.__traceback__ = None
+                del exc
+
+                if not recoverable:
+                    logger.error("processing_failed", input=str(input_path), error=last_error)
+                    return ProcessorResult(
+                        input_path,
+                        success=False,
+                        error=f"Background removal failed: {last_error}",
+                    )
+
+                logger.warning(
+                    "oom_rebuilding_session",
+                    input=str(input_path),
+                    attempt=attempt,
+                )
+                with self._gpu_lock:
+                    self._flush_gpu_memory()  # now actually frees the old GPU session
+                time.sleep(0.5 * attempt)
+
+        # GPU could not fit the image — fall back to CPU rather than fail it.
+        if self.config.cpu_fallback_on_oom:
+            logger.warning("oom_cpu_fallback", input=str(input_path))
+            try:
+                mask = self._segment(source, remove_fn, self._get_cpu_session())
+                result = self._save(input_path, mask, output_path)
+                result.metadata["device"] = "cpu_fallback"
+                return result
+            except Exception as exc:
+                logger.exception("cpu_fallback_failed", input=str(input_path))
+                last_error = str(exc)
+
+        return ProcessorResult(
+            input_path,
+            success=False,
+            error=f"Background removal failed after OOM recovery: {last_error}",
+        )
+
+    def process(self, input_path: Path) -> ProcessorResult:
+        """Remove the background from a single image file.
+
+        The result is always saved as a PNG with an alpha channel.  If
+        ``config.skip_existing`` is enabled and the output already exists,
+        the file is left untouched and a successful result is returned
+        immediately.
+
+        Args:
+            input_path: Path to the source image.
+
+        Returns:
+            A :class:`ProcessorResult` whose ``success`` flag indicates
+            whether background removal and saving completed without error.
+        """
+        is_valid, error_msg = validate_file(input_path)
+        if not is_valid:
+            return ProcessorResult(input_path, success=False, error=error_msg)
+
+        output_path = self._mirror_output_path(input_path)
+
+        if output_path.exists() and self.config.skip_existing:
+            logger.info("skipping_existing", input=str(input_path), output=str(output_path))
+            return ProcessorResult(
+                input_path,
+                output_path=output_path,
+                success=True,
+                metadata={"skipped": True},
+            )
+
+        try:
+            from rembg import remove as rembg_remove
+        except ImportError:
+            return ProcessorResult(
+                input_path,
+                success=False,
+                error="rembg is not installed — run: pip install rembg[gpu]",
+            )
+
+        try:
+            source = Image.open(input_path)
+        except Exception as exc:
+            return ProcessorResult(input_path, success=False, error=f"Failed to open image: {exc}")
+
+        if self.config.matte_background:
+            # Normalise transparent inputs onto a solid matte so the segmenter
+            # sees the intended background (and drops semi-transparent washes)
+            # instead of rembg's alpha-dropping convert("RGB"). Also makes the
+            # output RGB fringe blend to the matte colour rather than to whatever
+            # RGB was stored under the transparent pixels.
+            source = flatten_to_matte(source, tuple(self.config.matte_color))
+
+        logger.info("processing_start", input=str(input_path), model=self.model_name, size=source.size)
+
+        return self._remove_with_retry(input_path, source, output_path, rembg_remove)
+
+    def _mirror_output_path(self, input_path: Path) -> Path:
+        """Derive an output path that mirrors *input_path*'s position within the input directory.
+
+        Given ``input_dir/a/b/image.jpg`` and ``output_dir``, produces
+        ``output_dir/a/b/image_nobg.png``, preserving the full subdirectory
+        hierarchy rather than flattening everything into the output root.
+
+        Args:
+            input_path: Absolute or relative path to the source image.
+
+        Returns:
+            Destination path under :attr:`config.output_dir` with ``_nobg``
+            appended to the stem and the extension replaced with ``.png``.
+        """
+        relative = input_path.relative_to(self.config.input_dir)
+        return self.config.output_dir / relative.parent / f"{input_path.stem}_nobg.png"
+
+    def _refine_edges(self, source: Image.Image, mask: Image.Image) -> Image.Image:
+        """Apply the configured edge-refinement stages to a segmented mask.
+
+        For strong models (BiRefNet/BRIA) the mask is already clean, so the
+        defaults keep this light to avoid the "smudged" look:
+
+        * **Alpha edge sharpening** (default on) — a smoothstep contrast curve
+        around 0.5 that crispens the alpha edge and shrinks the
+        semi-transparent halo while preserving anti-aliasing.
+        * **Alpha matting** (default off) — recovers smooth hair/fur edges via
+        ``pymatting``; useful for weaker models but can soften strong masks.
+        * **Edge decontamination** (default off, ``radius>0``) — corrects RGB
+        bleed on fringe pixels. The per-pixel pass is slow; leave off unless a
+        colour halo persists.
+        * **Alpha erosion** (default off) — trims the outermost alpha layer as a
+        last resort; can thin fine details such as hair.
+
+        Args:
+            source: Full-resolution source image (reference for alpha matting).
+            mask: RGBA mask produced by rembg (already at full resolution).
+
+        Returns:
+            Refined RGBA image. With all stages disabled, *mask* is returned
+            unchanged.
+        """
+        logger.debug(
+            "refine_edges_start",
+            alpha_matting=self.config.alpha_matting,
+            alpha_edge_sharpening=self.config.alpha_edge_sharpening,
+            erode_alpha=self.config.erode_alpha,
+            edge_radius=self.config.edge_decontamination_radius,
+        )
+
+        if self.config.alpha_matting:
+            try:
+                refined = apply_alpha_matting(source, mask)
+                if refined is not None:
+                    mask = refined
+            except Exception as exc:
+                logger.warning("alpha_matting_failed", reason=str(exc))
+
+        if self.config.alpha_edge_sharpening > 0:
+            mask = sharpen_alpha(mask, strength=self.config.alpha_edge_sharpening)
+            logger.debug("alpha_sharpened")
+
+        if self.config.edge_decontamination_radius > 0:
+            mask = decontaminate_edges(mask, radius=self.config.edge_decontamination_radius)
+            logger.debug("decontamination_done")
+
+        if self.config.erode_alpha:
+            mask = erode_alpha(mask, pixels=1)
+            logger.debug("erosion_done")
+
+        return mask
+
+    def _save(
+        self,
+        input_path: Path,
+        image: Image.Image,
+        output_path: Path,
+    ) -> ProcessorResult:
+        """Persist *image* to *output_path* as a PNG file.
+
+        Args:
+            input_path: Original source path (used for metadata and logging).
+            image: Processed RGBA image ready for saving.
+            output_path: Destination ``.png`` path.
+
+        Returns:
+            A successful :class:`ProcessorResult` with size metadata, or a
+            failed one if writing raised an exception.
+        """
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            # compress_level is a zlib time-vs-size knob only; pixels stay lossless.
+            image.save(
+                output_path,
+                format="PNG",
+                compress_level=self.config.png_compress_level,
+            )
+
+            if self.config.verify_integrity and not output_path.exists():
+                raise OSError("Output file was not created")
+
+        except Exception as exc:
+            logger.exception("save_failed", input=str(input_path))
+            return ProcessorResult(input_path, success=False, error=f"Failed to save output: {exc}")
+
+        return ProcessorResult(
+            input_path,
+            output_path=output_path,
+            success=True,
+            metadata={
+                "input_size": input_path.stat().st_size,
+                "output_size": output_path.stat().st_size,
+                "category": self.category.value,
+            },
+        )
+
+    """Edge decontamination and alpha matting utilities for rembg output."""
+
+
+def sharpen_alpha(image: Image.Image, strength: float = 0.5) -> Image.Image:
+    """Solidify the foreground and crispen the alpha edge of an RGBA mask.
+
+    BiRefNet/BRIA min-max-normalise their mask, so the *interior* of the
+    subject lands around alpha 200–254 (≈0.8–0.99) instead of a solid 255 —
+    the whole subject ends up faintly translucent ("esfumaçado"), and the
+    upscaled edge carries a soft halo.
+
+    This applies a "levels" remap: a transition band centred on 0.5 with
+    half-width ``w = 0.5 * (1 - strength)``. Alpha above ``0.5 + w`` snaps to
+    fully opaque (solid subject), alpha below ``0.5 - w`` snaps to fully
+    transparent (halo removed), and the band between is smoothstepped to keep a
+    thin anti-aliased edge.
+
+    Args:
+        image: RGBA image produced by rembg.
+        strength: ``[0, 1]``. ``0`` is a no-op; ``0.5`` (default) snaps
+            everything ≥0.75 to opaque and ≤0.25 to transparent while keeping a
+            soft mid band; ``1`` is a hard binary cut at 0.5.
+
+    Returns:
+        A new RGBA ``Image`` with a solid interior and a crisp edge.
+    """
+    strength = float(max(0.0, min(1.0, strength)))
+    if strength == 0.0:
+        return image
+
+    rgba = np.array(image)
+    alpha = rgba[..., 3].astype(np.float32) / 255.0
+
+    half_band = 0.5 * (1.0 - strength)
+    low, high = 0.5 - half_band, 0.5 + half_band
+
+    if high > low:
+        t = np.clip((alpha - low) / (high - low), 0.0, 1.0)
+    else:  # strength == 1.0 → hard threshold at 0.5
+        t = (alpha >= 0.5).astype(np.float32)
+
+    # Smoothstep (3t² - 2t³) for a soft, non-jagged transition within the band.
+    remapped = t * t * (3.0 - 2.0 * t)
+
+    rgba[..., 3] = np.clip(remapped * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(rgba, mode="RGBA")
+
+
+def decontaminate_edges(image: Image.Image, radius: int = 1) -> Image.Image:
+    """Remove white/light color bleed from semi-transparent edge pixels.
+
+    When a segmentation model is trained on white-background images, pixels
+    near the subject boundary tend to have their RGB channels "contaminated"
+    by the background color.  This function corrects those pixels by
+    replacing each semi-transparent pixel's color with a weighted average
+    of its fully-opaque neighbors, effectively pushing the background color
+    out of the fringe.
+
+    Args:
+        image: RGBA image produced by rembg.
+        radius: Neighbourhood radius (px) used when sampling opaque neighbors.
+            ``1`` is sufficient for most halos; increase to ``2`` for thicker
+            fringes at the cost of a small runtime hit.
+
+    Returns:
+        A new RGBA ``Image`` with edge colors corrected.
+    """
+    rgba = np.array(image, dtype=np.float32)          # (H, W, 4)
+    rgb, alpha = rgba[..., :3], rgba[..., 3]
+
+    opaque_mask = alpha > 240                          # fully-opaque pixels
+    fringe_mask = (alpha > 0) & ~opaque_mask          # semi-transparent edge
+
+    if not fringe_mask.any():
+        return image                                   # nothing to fix
+
+    corrected = rgb.copy()
+
+    # For every fringe pixel, collect the mean color of opaque neighbors
+    # within *radius* and use that as the "true" foreground color.
+    ys, xs = np.where(fringe_mask)
+    h, w = alpha.shape
+
+    for y, x in zip(ys, xs):
+        y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+        x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+
+        neighbor_opaque = opaque_mask[y0:y1, x0:x1]
+        if not neighbor_opaque.any():
+            continue
+
+        neighbor_rgb = rgb[y0:y1, x0:x1]
+        corrected[y, x] = neighbor_rgb[neighbor_opaque].mean(axis=0)
+
+    result = rgba.copy()
+    result[..., :3] = corrected
+    return Image.fromarray(result.astype(np.uint8), mode="RGBA")
+
+
+def decontaminate_edges_wip(image: Image.Image, radius: int = 1) -> Image.Image:
+    """Remove white/light color bleed from semi-transparent edge pixels.
+
+    When a segmentation model is trained on white-background images, pixels
+    near the subject boundary tend to have their RGB channels "contaminated"
+    by the background color.  This function corrects those pixels by
+    replacing each semi-transparent pixel's color with a weighted average
+    of its fully-opaque neighbors, effectively pushing the background color
+    out of the fringe.
+
+    Args:
+        image: RGBA image produced by rembg.
+        radius: Neighbourhood radius (px) used when sampling opaque neighbors.
+            ``1`` is sufficient for most halos; increase to ``2`` for thicker
+            fringes at the cost of a small runtime hit.
+
+    Returns:
+        A new RGBA ``Image`` with edge colors corrected.
+    """
+    rgba  = np.array(image, dtype=np.float32)
+    rgb   = rgba[..., :3]
+    alpha = rgba[..., 3]
+
+    opaque_mask = alpha > 240
+
+    # Near-white fully-opaque pixels touching the edge of the subject
+    # are likely background bleed even though alpha=255.
+    channel_max  = rgb.max(axis=-1)
+    channel_min  = rgb.min(axis=-1)
+    is_near_white = (channel_min > 230) & ((channel_max - channel_min) < 15)
+
+    # Build a boundary mask: opaque pixels adjacent to transparent ones.
+    from scipy.ndimage import binary_dilation
+    transparent_mask = alpha < 10
+    boundary = binary_dilation(transparent_mask, iterations=radius) & opaque_mask
+
+    fringe_mask = ((alpha > 0) & ~opaque_mask) | (boundary & is_near_white)
+
+    if not fringe_mask.any():
+        return image
+
+    corrected = rgb.copy()
+    ys, xs = np.where(fringe_mask)
+    h, w = alpha.shape
+
+    for y, x in zip(ys, xs):
+        y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+        x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+
+        # Only sample from opaque non-white neighbors as color reference
+        neighbor_opaque    = opaque_mask[y0:y1, x0:x1]
+        neighbor_not_white = ~is_near_white[y0:y1, x0:x1]
+        good_neighbors     = neighbor_opaque & neighbor_not_white
+
+        if good_neighbors.any():
+            corrected[y, x] = rgb[y0:y1, x0:x1][good_neighbors].mean(axis=0)
+        else:
+            # No good neighbor found — make transparent instead
+            rgba[y, x, 3] = 0
+
+    result = rgba.copy()
+    result[..., :3] = corrected
+    return Image.fromarray(result.astype(np.uint8), mode="RGBA")
+
+def erode_alpha(image: Image.Image, pixels: int = 1) -> Image.Image:
+    """Shrink the alpha channel by *pixels* to trim stray fringe pixels.
+
+    A one-pixel erosion removes the outermost layer of semi-transparent
+    pixels that the segmentation mask often misclassifies as foreground.
+    Use this as a last resort when :func:`decontaminate_edges` alone is
+    insufficient — it is a destructive operation that can thin fine details
+    such as hair or fur.
+
+    Args:
+        image: RGBA image produced by rembg.
+        pixels: Number of pixels to erode.  Defaults to ``1``.
+
+    Returns:
+        A new RGBA ``Image`` with a slightly tighter alpha channel.
+    """
+    from scipy.ndimage import binary_erosion
+
+    rgba = np.array(image)
+    alpha = rgba[..., 3]
+
+    binary = alpha > 128
+    eroded = binary_erosion(binary, iterations=pixels)
+    rgba[..., 3] = np.where(eroded, alpha, 0)
+
+    return Image.fromarray(rgba, mode="RGBA")
+
+
+def apply_alpha_matting(
+    original: Image.Image,
+    mask: Image.Image,
+    foreground_threshold: int = 240,
+    background_threshold: int = 10,
+    erode_structure_size: int = 10,
+) -> Image.Image:
+    """Refine a coarse rembg mask using alpha matting.
+
+    Builds a trimap from the coarse mask by eroding the foreground region
+    to create a definite-foreground band and dilating to create a
+    definite-background band, with the transition zone left as unknown.
+
+    Args:
+        original: Full-resolution source image (RGB or RGBA).
+        mask: Coarse RGBA mask from rembg.
+        foreground_threshold: Alpha values above this are treated as
+            definite foreground (0–255).
+        background_threshold: Alpha values below this are treated as
+            definite background (0–255).
+        erode_structure_size: Radius of the morphological structuring element
+            used to separate foreground/background trimap regions. Larger
+            values widen the unknown band and can recover more detail but
+            increase compute time.
+
+    Returns:
+        Full-resolution RGBA image with a refined, smooth alpha channel.
+
+    Raises:
+        ImportError: If ``pymatting`` is not installed.
+    """
+    try:
+        from pymatting import estimate_alpha_lkm
+    except ImportError as exc:
+        raise ImportError("pymatting is required for alpha matting") from exc
+
+    from scipy.ndimage import binary_dilation, binary_erosion
+
+    original_size = original.size
+    needs_resize = max(original_size) > MAX_INFERENCE_DIM
+
+    if needs_resize:
+        scale = MAX_INFERENCE_DIM / max(original_size)
+        small_size = (int(original_size[0] * scale), int(original_size[1] * scale))
+        original_small = original.convert("RGB").resize(small_size, Image.LANCZOS)
+        mask_small = mask.resize(small_size, Image.LANCZOS)
+    else:
+        original_small = original.convert("RGB")
+        mask_small = mask
+
+    source_np = np.array(original_small, dtype=np.float64) / 255.0
+    alpha_np  = np.array(mask_small.getchannel("A"), dtype=np.float64) / 255.0
+
+    binary    = alpha_np > 0.5
+    structure = np.ones((erode_structure_size, erode_structure_size), dtype=bool)
+    definite_fg = binary_erosion(binary,  structure=structure)
+    definite_bg = ~binary_dilation(binary, structure=structure)
+
+    trimap = np.full(alpha_np.shape, 0.5)
+    trimap[definite_fg] = 1.0
+    trimap[definite_bg] = 0.0
+
+    refined_alpha = estimate_alpha_lkm(source_np, trimap)
+
+    # Always composite the refined ALPHA onto the ORIGINAL RGB. Using
+    # estimate_foreground_ml's recoloured RGB shifts the subject's true colours
+    # and is a source of the "smudged" look, so we only borrow its alpha.
+    alpha_img = Image.fromarray((refined_alpha * 255).astype(np.uint8), mode="L")
+
+    if needs_resize:
+        alpha_img = alpha_img.resize(original_size, Image.LANCZOS)
+
+    r, g, b, _ = original.convert("RGBA").split()
+    return Image.merge("RGBA", (r, g, b, alpha_img))

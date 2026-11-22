@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aforge-flow"
+version = "0.1.0"
+description = "GPU-accelerated tabletop/VTT asset pipeline for batch background removal, image cleaning, media transcoding, and creature classification"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "AForge Flow Contributors" }]
+keywords = ["background-removal", "rembg", "video-optimization", "image-processing", "gpu", "cuda"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Video",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+
+dependencies = [
+    "rembg[gpu]>=0.0.52",
+    "opencv-python>=4.8.0",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "click>=8.1.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "tqdm>=4.65.0",
+    "structlog>=23.1.0",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+video = [
+    "ffmpeg-python>=0.2.0",
+    "av>=10.0.0",
+]
+classify = [
+    # Zero-shot CLIP-family classification + optional VLM fallback.
+    "transformers>=4.49.0,<5",
+    "accelerate>=0.30.0",
+    "bitsandbytes>=0.43.0; platform_system == 'Linux'",
+]
+
+[project.scripts]
+aforge = "aforge_flow.cli:main"
+
+# On Linux the default PyPI ``torch`` wheel already bundles CUDA, so a plain
+# ``uv sync`` gets GPU support. To pin a specific CUDA/CPU build, uncomment:
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu121"
+# url = "https://download.pytorch.org/whl/cu121"
+# explicit = true
+# [tool.uv.sources]
+# torch = { index = "pytorch-cu121" }
+# torchvision = { index = "pytorch-cu121" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"aforge_flow.core" = ["profiles/*.json"]
